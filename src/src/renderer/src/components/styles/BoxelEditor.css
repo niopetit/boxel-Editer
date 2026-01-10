@@ -1,0 +1,126 @@
+.boxel-editor {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1a;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
+    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
+
+#three-canvas {
+  width: 100%;
+  height: calc(100vh - 130px);
+  display: block;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  padding: 10px 15px;
+  background: #2a2a2a;
+  border-bottom: 1px solid #444;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.toolbar button {
+  padding: 6px 12px;
+  background: #4a90e2;
+  color: #fff;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.toolbar button:hover:not(:disabled) {
+  background: #3873b8;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.toolbar button:disabled {
+  background: #555;
+  color: #999;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.toolbar button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.toolbar input[type='color'] {
+  width: 40px;
+  height: 32px;
+  border: 1px solid #555;
+  border-radius: 2px;
+  cursor: pointer;
+  background: #333;
+}
+
+.toolbar input[type='color']:hover {
+  border-color: #777;
+}
+
+.status-bar {
+  display: flex;
+  gap: 20px;
+  padding: 8px 15px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #444;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.status-bar span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-bar span strong {
+  color: #fff;
+}
+
+.instructions {
+  padding: 8px 15px;
+  background: #222;
+  border-bottom: 1px solid #333;
+  font-size: 11px;
+  color: #999;
+}
+
+.instructions p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* レスポンシブ調整 */
+@media (max-width: 768px) {
+  .toolbar {
+    gap: 5px;
+    padding: 8px 10px;
+  }
+
+  .toolbar button {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .status-bar {
+    gap: 10px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .instructions {
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+}

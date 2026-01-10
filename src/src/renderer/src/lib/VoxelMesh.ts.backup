@@ -1,0 +1,478 @@
+/**
+ * VoxelMesh
+ * ボクセルメッシュの管理と3Dメッシュ生成を行うクラス
+ * 3Dオブジェクト仕様書に準拠
+ */
+
+import * as THREE from 'three'
+import { Voxel, Vertex, Face, Vector3, VoxelSnapshot } from '../types/index'
+
+export class VoxelMesh {
+  private voxels: Map<string, Voxel> = new Map()
+  private colorMap: Map<string, string> = new Map()
+  private vertexIdCounter: number = 0
+  private voxelIdCounter: number = 0
+
+  constructor(_gridSizeX: number, _gridSizeY: number) {
+    // 初期状態では空のグリッド（仕様書準拠）
+    // _gridSizeX, _gridSizeY は将来の機能拡張用に予約
+  }
+
+  /**
+   * 単一のボクセルを作成
+   */
+  private createVoxel(position: Vector3): Voxel {
+    const voxelId = `voxel_${this.voxelIdCounter++}`
+    const vertices: Vertex[] = this.createVertices(position)
+    const faces: Face[] = this.createFaces(vertices)
+
+    const voxel: Voxel = {
+      id: voxelId,
+      position,
+      vertices,
+      faces
+    }
+
+    this.voxels.set(voxelId, voxel)
+    return voxel
+  }
+
+  /**
+   * ボクセルの8つの頂点を作成
+   * 仕様書準拠：位置(x,y,z)から8頂点を生成
+   */
+  private createVertices(position: Vector3): Vertex[] {
+    const vertices: Vertex[] = []
+
+    // 仕様書に従った8つの頂点定義
+    const vertexPositions = [
+      { x: position.x, y: position.y + 1, z: position.z }, // v0
+      { x: position.x + 1, y: position.y + 1, z: position.z }, // v1
+      { x: position.x, y: position.y, z: position.z }, // v2
+      { x: position.x + 1, y: position.y, z: position.z }, // v3
+      { x: position.x, y: position.y + 1, z: position.z + 1 }, // v4
+      { x: position.x + 1, y: position.y + 1, z: position.z + 1 }, // v5
+      { x: position.x, y: position.y, z: position.z + 1 }, // v6
+      { x: position.x + 1, y: position.y, z: position.z + 1 } // v7
+    ]
+
+    vertexPositions.forEach((pos) => {
+      const vertex: Vertex = {
+        id: `v_${this.vertexIdCounter++}`,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z
+      }
+      vertices.push(vertex)
+    })
+
+    return vertices
+  }
+
+  /**
+   * ボクセルの6つの面を作成（仕様書準拠）
+   */
+  private createFaces(vertices: Vertex[]): Face[] {
+    const faces: Face[] = []
+
+    // 仕様書の面定義
+    const faceDefinitions = [
+      { 
+        id: 'top', 
+        indices: [0, 1, 5, 4], 
+        normal: 'y+',
+        name: 'Top' 
+      }, // 上面：v0, v1, v5, v4
+      { 
+        id: 'bottom', 
+        indices: [2, 3, 7, 6], 
+        normal: 'y-',
+        name: 'Bottom' 
+      }, // 下面：v2, v3, v7, v6
+      { 
+        id: 'front', 
+        indices: [0, 1, 3, 2], 
+        normal: 'z-',
+        name: 'Front' 
+      }, // 正面：v0, v1, v3, v2
+      { 
+        id: 'back', 
+        indices: [4, 5, 7, 6], 
+        normal: 'z+',
+        name: 'Back' 
+      }, // 背面：v4, v5, v7, v6
+      { 
+        id: 'left', 
+        indices: [0, 2, 6, 4], 
+        normal: 'x-',
+        name: 'Left' 
+      }, // 左面：v0, v2, v6, v4
+      { 
+        id: 'right', 
+        indices: [1, 3, 7, 5], 
+        normal: 'x+',
+        name: 'Right' 
+      } // 右面：v1, v3, v7, v5
+    ]
+
+    faceDefinitions.forEach((def, index) => {
+      const face: Face = {
+        id: `face_${index}`,
+        vertexIds: def.indices.map((i) => vertices[i].id),
+        normal: def.normal,
+        color: '#808080' // デフォルト: グレー
+      }
+      faces.push(face)
+    })
+
+    return faces
+  }
+
+  /**
+   * ボクセルを追加
+   */
+  addVoxel(position: Vector3): Voxel | null {
+    // 既存のボクセルと重複しないかチェック
+    for (const voxel of this.voxels.values()) {
+      if (
+        voxel.position.x === position.x &&
+        voxel.position.y === position.y &&
+        voxel.position.z === position.z
+      ) {
+        console.warn('Voxel already exists at position:', position)
+        return null
+      }
+    }
+
+    return this.createVoxel(position)
+  }
+
+  /**
+   * 指定した面の隣に新しいボクセルを追加
+   */
+  addVoxelAtFace(face: Face): Voxel | null {
+    // 面が属するボクセルを見つける
+    let sourceVoxel: Voxel | null = null
+    for (const voxel of this.voxels.values()) {
+      if (voxel.faces.some((f) => f.id === face.id)) {
+        sourceVoxel = voxel
+        break
+      }
+    }
+
+    if (!sourceVoxel) return null
+
+    // 面の法線方向に基づいて新しい位置を計算
+    const normal = face.normal
+    const newPosition = { ...sourceVoxel.position }
+
+    switch (normal) {
+      case 'x+':
+        newPosition.x += 1
+        break
+      case 'x-':
+        newPosition.x -= 1
+        break
+      case 'y+':
+        newPosition.y += 1
+        break
+      case 'y-':
+        newPosition.y -= 1
+        break
+      case 'z+':
+        newPosition.z += 1
+        break
+      case 'z-':
+        newPosition.z -= 1
+        break
+    }
+
+    return this.addVoxel(newPosition)
+  }
+
+  /**
+   * ボクセルを削除し、スナップショットを返す
+   */
+  deleteVoxel(voxelId: string): VoxelSnapshot | null {
+    const voxel = this.voxels.get(voxelId)
+    if (!voxel) return null
+
+    // スナップショットを作成（復元用）
+    const snapshot: VoxelSnapshot = {
+      position: { ...voxel.position },
+      vertices: [...voxel.vertices],
+      faces: [...voxel.faces],
+      colors: {}
+    }
+
+    // 面の色情報も保存
+    voxel.faces.forEach(face => {
+      const colorKey = `${voxelId}_${face.id}`
+      if (this.colorMap.has(colorKey)) {
+        snapshot.colors![face.id] = this.colorMap.get(colorKey)!
+      }
+    })
+
+    // ボクセルとその色情報を削除
+    this.voxels.delete(voxelId)
+    voxel.faces.forEach(face => {
+      this.colorMap.delete(`${voxelId}_${face.id}`)
+    })
+
+    return snapshot
+  }
+
+  /**
+   * ボクセルを復元
+   */
+  restoreVoxel(voxelId: string, snapshot: VoxelSnapshot): boolean {
+    if (this.voxels.has(voxelId)) {
+      console.warn('Voxel already exists:', voxelId)
+      return false
+    }
+
+    const voxel: Voxel = {
+      id: voxelId,
+      position: {
+        x: snapshot.vertices[0]?.x ?? 0,
+        y: snapshot.vertices[0]?.y ?? 0,
+        z: snapshot.vertices[0]?.z ?? 0
+      },
+      vertices: snapshot.vertices,
+      faces: snapshot.faces
+    }
+
+    this.voxels.set(voxelId, voxel)
+
+    // 色情報も復元
+    if (snapshot.colors) {
+      snapshot.faces.forEach((face) => {
+        const colorKey = `${voxelId}_${face.id}`
+        if (snapshot.colors![face.id]) {
+          this.colorMap.set(colorKey, snapshot.colors![face.id])
+          face.color = snapshot.colors![face.id]
+        }
+      })
+    }
+
+    return true
+  }
+
+  /**
+   * 3D座標からボクセルを検索
+   */
+  getVoxelAtPosition(position: Vector3): Voxel | null {
+    for (const voxel of this.voxels.values()) {
+      if (
+        Math.abs(voxel.position.x - position.x) < 0.01 &&
+        Math.abs(voxel.position.y - position.y) < 0.01 &&
+        Math.abs(voxel.position.z - position.z) < 0.01
+      ) {
+        return voxel
+      }
+    }
+    return null
+  }
+
+  /**
+   * レイキャスティング結果から面を特定
+   */
+  getFaceFromRaycast(
+    point: THREE.Vector3,
+    voxel: Voxel,
+    maxDistance: number = 0.6
+  ): Face | null {
+    let closestFace: Face | null = null
+    let minDistance = maxDistance
+
+    voxel.faces.forEach((face) => {
+      // 面の頂点を取得
+      const faceVertices = face.vertexIds.map((id) => {
+        const v = voxel.vertices.find((vert) => vert.id === id)
+        return v ? new THREE.Vector3(v.x, v.y, v.z) : new THREE.Vector3()
+      })
+
+      // 面の中心を計算
+      const center = new THREE.Vector3()
+      faceVertices.forEach((v) => center.add(v))
+      center.divideScalar(faceVertices.length)
+
+      // レイキャスト点から面の中心までの距離
+      const distance = point.distanceTo(center)
+
+      if (distance < minDistance) {
+        minDistance = distance
+        closestFace = face
+      }
+    })
+
+    return closestFace
+  }
+
+  /**
+   * 指定したボクセルの指定した面に色を設定
+   */
+  colorSpecificFace(voxelId: string, faceId: string, color: string): boolean {
+    const voxel = this.voxels.get(voxelId)
+    if (!voxel) return false
+
+    const face = voxel.faces.find((f) => f.id === faceId)
+    if (!face) return false
+
+    const colorKey = `${voxelId}_${faceId}`
+    this.colorMap.set(colorKey, color)
+    face.color = color
+
+    return true
+  }
+
+  /**
+   * 指定したボクセルを取得
+   */
+  getVoxel(voxelId: string): Voxel | undefined {
+    return this.voxels.get(voxelId)
+  }
+
+  /**
+   * すべてのボクセルを取得
+   */
+  getVoxels(): Map<string, Voxel> {
+    return this.voxels
+  }
+
+  /**
+   * ボクセルの総数
+   */
+  getVoxelCount(): number {
+    return this.voxels.size
+  }
+
+  /**
+   * 総頂点数
+   */
+  getVertexCount(): number {
+    let count = 0
+    this.voxels.forEach(voxel => {
+      count += voxel.vertices.length
+    })
+    return count
+  }
+
+  /**
+   * 総面数
+   */
+  getFaceCount(): number {
+    let count = 0
+    this.voxels.forEach((voxel) => {
+      count += voxel.faces.length
+    })
+    return count
+  }
+
+  /**
+   * Three.jsのメッシュに変換（最適化版）
+   */
+  toThreeMesh(): THREE.Group {
+    const group = new THREE.Group()
+
+    // 色ごとにジオメトリを分離
+    const geometries = new Map<
+      string,
+      {
+        positions: number[]
+        normals: number[]
+        color: string
+        metadata: Array<{ voxelId: string; faceId: string }>
+      }
+    >()
+
+    // ボクセルを処理
+    this.voxels.forEach((voxel) => {
+      voxel.faces.forEach((face) => {
+        const color = face.color || '#808080'
+
+        if (!geometries.has(color)) {
+          geometries.set(color, {
+            positions: [],
+            normals: [],
+            color,
+            metadata: []
+          })
+        }
+
+        const geomData = geometries.get(color)!
+        const vertices = face.vertexIds.map((id) => {
+          const vertex = voxel.vertices.find((v) => v.id === id)
+          return vertex ? new THREE.Vector3(vertex.x, vertex.y, vertex.z) : new THREE.Vector3()
+        })
+
+        // 法線を計算
+        const v1 = vertices[1].clone().sub(vertices[0])
+        const v2 = vertices[2].clone().sub(vertices[0])
+        const normal = v1.cross(v2).normalize()
+
+        // 三角形1 (v0, v1, v2)
+        ;[vertices[0], vertices[1], vertices[2]].forEach((v) => {
+          geomData.positions.push(v.x, v.y, v.z)
+          geomData.normals.push(normal.x, normal.y, normal.z)
+          geomData.metadata.push({ voxelId: voxel.id, faceId: face.id })
+        })
+
+        // 三角形2 (v0, v2, v3)
+        ;[vertices[0], vertices[2], vertices[3]].forEach((v) => {
+          geomData.positions.push(v.x, v.y, v.z)
+          geomData.normals.push(normal.x, normal.y, normal.z)
+          geomData.metadata.push({ voxelId: voxel.id, faceId: face.id })
+        })
+      })
+    })
+
+    // メッシュを作成
+    geometries.forEach(({ positions, normals, color, metadata }) => {
+      if (positions.length === 0) return
+
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
+      geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3))
+
+      // メタデータを userData に格納
+      geometry.userData.metadata = metadata
+
+      const rgbColor = this.hexToRgb(color)
+      const material = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(rgbColor.r / 255, rgbColor.g / 255, rgbColor.b / 255),
+        shininess: 100,
+        side: THREE.DoubleSide
+      })
+
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.userData.metadata = metadata
+      mesh.userData.voxelMesh = this
+      group.add(mesh)
+    })
+
+    return group
+  }
+
+  /**
+   * 16進数カラーをRGBに変換
+   */
+  private hexToRgb(hex: string): { r: number; g: number; b: number } {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result
+      ? {
+          r: parseInt(result[1], 16),
+          g: parseInt(result[2], 16),
+          b: parseInt(result[3], 16)
+        }
+      : { r: 128, g: 128, b: 128 } // デフォルト: グレー
+  }
+
+  /**
+   * メモリクリーンアップ
+   */
+  dispose(): void {
+    this.voxels.clear()
+    this.colorMap.clear()
+  }
+}
