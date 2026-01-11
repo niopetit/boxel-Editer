@@ -97,9 +97,13 @@ export class CameraController {
   /**
    * カメラを上方向に回転（オブジェクトが下に回転）
    */
+  /**
+   * カメラを上方向に回転（カメラのローカル座標系の right ベクトル周り）
+   */
   private rotateUp(): void {
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
     const quat = new THREE.Quaternion()
-    quat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.rotationSensitivity)
+    quat.setFromAxisAngle(rightVector, this.rotationSensitivity)
     this.camera.position.sub(this.target)
     this.camera.position.applyQuaternion(quat)
     this.camera.position.add(this.target)
@@ -107,11 +111,12 @@ export class CameraController {
   }
 
   /**
-   * カメラを下方向に回転（オブジェクトが上に回転）
+   * カメラを下方向に回転（カメラのローカル座標系の right ベクトル周り）
    */
   private rotateDown(): void {
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
     const quat = new THREE.Quaternion()
-    quat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -this.rotationSensitivity)
+    quat.setFromAxisAngle(rightVector, -this.rotationSensitivity)
     this.camera.position.sub(this.target)
     this.camera.position.applyQuaternion(quat)
     this.camera.position.add(this.target)
@@ -119,7 +124,7 @@ export class CameraController {
   }
 
   /**
-   * カメラを左方向に回転（オブジェクトが右に回転）
+   * カメラを左方向に回転（ワールド Y軸周り）
    */
   private rotateLeft(): void {
     const quat = new THREE.Quaternion()
@@ -131,7 +136,7 @@ export class CameraController {
   }
 
   /**
-   * カメラを右方向に回転（オブジェクトが左に回転）
+   * カメラを右方向に回転（ワールド Y軸周り）
    */
   private rotateRight(): void {
     const quat = new THREE.Quaternion()
@@ -143,35 +148,41 @@ export class CameraController {
   }
 
   /**
-   * カメラを上方向にパン
+   * カメラを上方向にパン（カメラのローカル座標系）
    */
   private panUp(): void {
-    this.camera.position.y += this.panSensitivity
-    this.target.y += this.panSensitivity
+    const panVector = new THREE.Vector3(0, this.panSensitivity, 0)
+    this.camera.position.add(panVector)
+    this.target.add(panVector)
   }
 
   /**
-   * カメラを下方向にパン
+   * カメラを下方向にパン（カメラのローカル座標系）
    */
   private panDown(): void {
-    this.camera.position.y -= this.panSensitivity
-    this.target.y -= this.panSensitivity
+    const panVector = new THREE.Vector3(0, -this.panSensitivity, 0)
+    this.camera.position.add(panVector)
+    this.target.add(panVector)
   }
 
   /**
-   * カメラを左方向にパン
+   * カメラを左方向にパン（カメラのローカル座標系）
    */
   private panLeft(): void {
-    this.camera.position.x -= this.panSensitivity
-    this.target.x -= this.panSensitivity
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
+    const panVector = rightVector.multiplyScalar(-this.panSensitivity)
+    this.camera.position.add(panVector)
+    this.target.add(panVector)
   }
 
   /**
-   * カメラを右方向にパン
+   * カメラを右方向にパン（カメラのローカル座標系）
    */
   private panRight(): void {
-    this.camera.position.x += this.panSensitivity
-    this.target.x += this.panSensitivity
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
+    const panVector = rightVector.multiplyScalar(this.panSensitivity)
+    this.camera.position.add(panVector)
+    this.target.add(panVector)
   }
 
   /**

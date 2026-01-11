@@ -32,6 +32,8 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2())
   const animationIdRef = useRef<number>(0)
   const updateVoxelMeshRef = useRef<(() => void) | null>(null)
+  const previouslySelectedMeshRef = useRef<THREE.Mesh | null>(null)
+  const previouslyHoveredMeshRef = useRef<THREE.Mesh | null>(null)
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -48,9 +50,9 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     const dpr = window.devicePixelRatio || 1
 
     const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000)
-    // カメラをボクセルから見やすい距離に配置
-    camera.position.set(3, 3, 5)
-    camera.lookAt(0.5, 0.5, 0.5)
+    // カメラを Z軸上に遠く配置し、オブジェクトの中心高さを見るように設定
+    camera.position.set(0, 0, 20)
+    camera.lookAt(0, gridSize.y / 2, 0)
     cameraRef.current = camera
 
     const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false })
@@ -82,17 +84,29 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     const voxelMesh = new VoxelMesh(gridSize.x, gridSize.y)
     voxelMeshRef.current = voxelMesh
 
-    // === デモ用：初期ボクセルを立方体で追加 (2×2×2) ===
+    // === 初期ボクセルを立方体で追加、底面を y=0 に固定 ===
     console.log('[BoxelEditor] VoxelMesh created')
-    // 2×2×2立方体を作成
-    for (let x = 0; x < 2; x++) {
-      for (let y = 0; y < 2; y++) {
-        for (let z = 0; z < 2; z++) {
-          voxelMesh.addVoxel({ x, y, z })
+    console.log(`[BoxelEditor] Grid size: ${gridSize.x} x ${gridSize.y} x ${gridSize.z}`)
+    
+    // 底面が y=0 に、X-Z 平面の中心が (0,0) になるようにオフセットを計算
+    const offsetX = -Math.floor(gridSize.x / 2)
+    const offsetY = 0 // 底面を y=0 に固定
+    const offsetZ = -Math.floor(gridSize.z / 2)
+    
+    // gridSize で指定されたサイズの立方体を作成
+    for (let x = 0; x < gridSize.x; x++) {
+      for (let y = 0; y < gridSize.y; y++) {
+        for (let z = 0; z < gridSize.z; z++) {
+          voxelMesh.addVoxel({
+            x: x + offsetX,
+            y: y + offsetY,
+            z: z + offsetZ
+          })
         }
       }
     }
-    console.log(`[BoxelEditor] Added 8 voxels (2×2×2 cube)`)
+    console.log(`[BoxelEditor] Added ${gridSize.x * gridSize.y * gridSize.z} voxels (${gridSize.x}×${gridSize.y}×${gridSize.z} cube)`)
+    console.log(`[BoxelEditor] Bottom face at y=0, X-Z center at (0, 0)`)
     console.log(`[BoxelEditor] Total voxels: ${voxelMesh.getVoxelCount()}`)
 
     // === メッシュをシーンに追加 ===
@@ -117,6 +131,10 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
       if (!meshGroupRef.current || !voxelMeshRef.current) return
       console.log('[updateVoxelMesh] Updating mesh...')
       console.log(`[updateVoxelMesh] Before clear: meshGroup has ${meshGroupRef.current.children.length} children`)
+      
+      // ハイライト参照をクリア
+      previouslySelectedMeshRef.current = null
+      previouslyHoveredMeshRef.current = null
       
       // 既存のメッシュをクリア
       meshGroupRef.current.clear()
@@ -156,6 +174,70 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     setVertexCount(voxelMesh.getVertexCount())
     setVoxelCount(voxelMesh.getVoxelCount())
 
+    // === マウスイベント: ムーブ（ホバーハイライト） ===
+    const handleMouseMove = (event: MouseEvent): void => {
+      if (!canvasRef.current || !cameraRef.current || !rendererRef.current || !meshGroupRef.current) return
+
+      const canvas = canvasRef.current
+      const rect = canvas.getBoundingClientRect()
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+
+      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current)
+
+      // meshGroupRef の直下のメッシュのみを対象にする
+      const meshes: THREE.Object3D[] = []
+      if (meshGroupRef.current) {
+        meshGroupRef.current.children.forEach((child) => {
+          if (child instanceof THREE.Mesh) {
+            meshes.push(child)
+          }
+        })
+      }
+
+      const intersects = raycasterRef.current.intersectObjects(meshes, false)
+
+      if (intersects.length > 0) {
+        const mesh = intersects[0].object as THREE.Mesh
+
+        // 前回ホバーされたメッシュと異なる場合、前のホバーハイライトを解除
+        if (previouslyHoveredMeshRef.current && previouslyHoveredMeshRef.current !== mesh) {
+          // 選択状態でなければハイライト解除
+          if (previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
+            const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
+            if (baseColor && previouslyHoveredMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
+              previouslyHoveredMeshRef.current.material.color.setHex(baseColor)
+            }
+          }
+        }
+
+        // 新しいホバー対象が選択されていなければホバーハイライトを適用
+        if (mesh !== previouslySelectedMeshRef.current) {
+          if (mesh.material instanceof THREE.MeshBasicMaterial) {
+            // 元の色を保存（baseColorはメッシュ更新時に設定される）
+            if (!mesh.userData.baseColor) {
+              mesh.userData.baseColor = mesh.material.color.getHex()
+            }
+            // 青色でホバーハイライト
+            mesh.material.color.setHex(0x0099FF)
+            previouslyHoveredMeshRef.current = mesh
+          }
+        } else {
+          // 選択されているメッシュをホバーした場合、ホバー参照をクリア（選択色を維持）
+          previouslyHoveredMeshRef.current = null
+        }
+      } else {
+        // ホバー対象がなくなった場合、ホバーハイライトを解除
+        if (previouslyHoveredMeshRef.current && previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
+          const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
+          if (baseColor && previouslyHoveredMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
+            previouslyHoveredMeshRef.current.material.color.setHex(baseColor)
+          }
+        }
+        previouslyHoveredMeshRef.current = null
+      }
+    }
+
     // === マウスイベント: クリック ===
     const handleMouseClick = (event: MouseEvent): void => {
       console.log('[handleMouseClick] Canvas clicked')
@@ -191,6 +273,15 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
         console.log('[handleMouseClick] Hit object:', mesh.name || 'unnamed')
         console.log('[handleMouseClick] Hit object userData:', mesh.userData)
 
+        // 前回選択されたメッシュのハイライトを解除
+        if (previouslySelectedMeshRef.current && previouslySelectedMeshRef.current !== mesh) {
+          const baseColor = previouslySelectedMeshRef.current.userData.baseColor
+          if (baseColor && previouslySelectedMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
+            previouslySelectedMeshRef.current.material.color.setHex(baseColor)
+          }
+          previouslyHoveredMeshRef.current = null
+        }
+
         // メッシュのuserDataからボクセルIDと面IDを取得
         if (mesh.userData.voxelId && mesh.userData.faceId) {
           const voxelId = mesh.userData.voxelId as string
@@ -198,6 +289,18 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
 
           setSelectedVoxelId(voxelId)
           console.log('✓ Selected voxel:', voxelId, 'face:', faceId)
+
+          // 選択メッシュのハイライトを適用
+          if (mesh.material instanceof THREE.MeshBasicMaterial) {
+            // 元の色を保存（baseColorがなければ現在の色を保存）
+            if (!mesh.userData.baseColor) {
+              mesh.userData.baseColor = mesh.material.color.getHex()
+            }
+            // 黄色でハイライト
+            mesh.material.color.setHex(0xFFFF00)
+            previouslySelectedMeshRef.current = mesh
+            previouslyHoveredMeshRef.current = null
+          }
 
           // 選択された面を保存
           if (canvasRef.current) {
@@ -353,6 +456,18 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
               // メッシュの色を直接更新（再生成しない）
               voxelMeshRef.current.updateMeshColor(meshGroupRef.current, selectedVoxelId, targetFace.id, selectedColor)
 
+              // 更新されたメッシュの baseColor を新しい色に設定
+              if (meshGroupRef.current) {
+                meshGroupRef.current.children.forEach((child) => {
+                  if (child instanceof THREE.Mesh) {
+                    if (child.userData.voxelId === selectedVoxelId && child.userData.faceId === targetFace.id) {
+                      const colorValue = parseInt(selectedColor.replace('#', ''), 16)
+                      child.userData.baseColor = colorValue
+                    }
+                  }
+                })
+              }
+
               console.log('Face painted:', selectedVoxelId, targetFace.id, selectedColor)
 
               // アクション履歴に追加
@@ -423,6 +538,7 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
 
     // === イベントリスナー登録 ===
     canvasRef.current.addEventListener('click', handleMouseClick)
+    canvasRef.current.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('keydown', handleKeyDown)
     window.addEventListener('resize', handleResize)
 
@@ -440,6 +556,7 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     return (): void => {
       window.removeEventListener('resize', handleResize)
       canvasRef.current?.removeEventListener('click', handleMouseClick)
+      canvasRef.current?.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('keydown', handleKeyDown)
       cancelAnimationFrame(animationIdRef.current)
       renderer.dispose()
@@ -516,6 +633,16 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
         voxelMeshRef.current.colorSpecificFace(voxelId, targetFace.id, selectedColor)
         // メッシュの色を直接更新
         voxelMeshRef.current.updateMeshColor(meshGroupRef.current, voxelId, targetFace.id, selectedColor)
+        
+        // 更新されたメッシュの baseColor を新しい色に設定
+        meshGroupRef.current.children.forEach((child) => {
+          if (child instanceof THREE.Mesh) {
+            if (child.userData.voxelId === voxelId && child.userData.faceId === targetFace.id) {
+              const colorValue = parseInt(selectedColor.replace('#', ''), 16)
+              child.userData.baseColor = colorValue
+            }
+          }
+        })
       }
     }
   }
@@ -561,6 +688,7 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
       </div>
 
       <div className="status-bar">
+        <span>グリッドサイズ: {gridSize.x} × {gridSize.y} × {gridSize.z}</span>
         <span>頂点数: {vertexCount}</span>
         <span>ボクセル数: {voxelCount}</span>
         <span>選択: {selectedVoxelId ? selectedVoxelId : 'なし'}</span>
