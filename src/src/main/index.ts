@@ -1,14 +1,74 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import icon from '../../resources/icon.png?asset'
 
+// アプリ名を設定（macOSメニューに反映）- app.ready前に呼び出す
+if (process.platform === 'darwin') {
+  app.setName('Boxel Editor')
+}
+
 let mainWindow: BrowserWindow | null = null
+
+function createMenu(): void {
+  const isMac = process.platform === 'darwin'
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    // macOSのアプリケーションメニュー
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const, label: 'Boxel Editorについて' },
+              { type: 'separator' as const },
+              { role: 'hide' as const, label: 'Boxel Editorを隠す' },
+              { role: 'hideOthers' as const, label: 'ほかを隠す' },
+              { role: 'unhide' as const, label: 'すべてを表示' },
+              { type: 'separator' as const },
+              { role: 'quit' as const, label: 'Boxel Editorを終了' }
+            ]
+          }
+        ]
+      : []),
+    // ウィンドウメニュー
+    {
+      label: 'ウィンドウ',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'zoom', label: 'ズーム' },
+        ...(isMac
+          ? [
+              { type: 'separator' as const },
+              { role: 'front' as const, label: '手前に移動' }
+            ]
+          : [{ role: 'close' as const, label: '閉じる' }])
+      ]
+    },
+    // 開発メニュー（開発モードのみ）
+    ...(is.dev
+      ? [
+          {
+            label: '開発',
+            submenu: [
+              { role: 'reload' as const, label: '再読み込み' },
+              { role: 'forceReload' as const, label: '強制再読み込み' },
+              { role: 'toggleDevTools' as const, label: '開発者ツール' }
+            ]
+          }
+        ]
+      : [])
+  ]
+
+  const menu = Menu.buildFromTemplate(template)
+  Menu.setApplicationMenu(menu)
+}
 
 function createWindow(): void {
   // Create the browser window.
   const window = new BrowserWindow({
+    title: 'Boxel Editor',
     width: 900,
     height: 670,
     show: false,
@@ -46,7 +106,10 @@ function createWindow(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.boxel.editor')
+
+  // カスタムメニューを設定
+  createMenu()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

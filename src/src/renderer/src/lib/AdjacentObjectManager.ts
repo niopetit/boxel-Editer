@@ -30,7 +30,8 @@ export class AdjacentObjectManager {
     filePath: string,
     direction: 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
     mainGridSizeX: number,
-    mainGridSizeY: number
+    mainGridSizeY: number,
+    mainGridSizeZ: number = 1
   ): Promise<AdjacentObjectWithMesh | null> {
     try {
       // メインプロセス経由でGLTFファイルを読み込み
@@ -51,12 +52,16 @@ export class AdjacentObjectManager {
       const boundingBox = new THREE.Box3().setFromObject(gltf.scene)
       const size = new THREE.Vector3()
       boundingBox.getSize(size)
+      
+      // バウンディングボックスの最小点（GLTFファイルの原点オフセット）
+      const bboxMin = boundingBox.min.clone()
 
       // 位置を計算
       const position = this.calculateAdjacentPosition(
-        { x: mainGridSizeX, y: mainGridSizeY, z: 1 },
+        { x: mainGridSizeX, y: mainGridSizeY, z: mainGridSizeZ },
         { x: Math.ceil(size.x), y: Math.ceil(size.y), z: Math.ceil(size.z) || 1 },
-        direction
+        direction,
+        bboxMin
       )
 
       // メッシュグループを作成（元のマテリアルを保持）
@@ -240,25 +245,46 @@ export class AdjacentObjectManager {
 
   /**
    * 隣接オブジェクトの位置を計算
+   * メインオブジェクトはX-Z平面の中心が(0,0)、底面がy=0に配置される
+   * 例: gridSize.x=4の場合、X方向は-2〜2の範囲
+   * @param bboxMin 隣接オブジェクトのバウンディングボックス最小点（原点オフセット補正用）
    */
   private calculateAdjacentPosition(
     mainGridSize: { x: number; y: number; z: number },
     adjacentGridSize: { x: number; y: number; z: number },
-    direction: 'up' | 'down' | 'left' | 'right' | 'front' | 'back'
+    direction: 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
+    bboxMin: THREE.Vector3
   ): Vector3 {
+    // メインオブジェクトのオフセットを計算（中心が(0,0)になるように）
+    const mainOffsetX = -Math.floor(mainGridSize.x / 2)
+    const mainOffsetZ = -Math.floor(mainGridSize.z / 2)
+    // メインオブジェクトの実際の範囲
+    const mainMaxX = mainOffsetX + mainGridSize.x
+    const mainMaxZ = mainOffsetZ + mainGridSize.z
+
+    // 隣接オブジェクトのバウンディングボックス最小点を補正
+    // GLTFの原点がバウンディングボックスの最小点でない場合に対応
+    const adjOffsetX = -bboxMin.x
+    const adjOffsetY = -bboxMin.y
+    const adjOffsetZ = -bboxMin.z
+
     switch (direction) {
       case 'up':
-        return { x: 0, y: mainGridSize.y, z: 0 }
+        return { x: adjOffsetX, y: mainGridSize.y + adjOffsetY, z: adjOffsetZ }
       case 'down':
-        return { x: 0, y: -adjacentGridSize.y, z: 0 }
+        return { x: adjOffsetX, y: -adjacentGridSize.y + adjOffsetY, z: adjOffsetZ }
       case 'left':
-        return { x: -adjacentGridSize.x, y: 0, z: 0 }
+        // メインの左端に隣接
+        return { x: mainOffsetX - adjacentGridSize.x + adjOffsetX, y: adjOffsetY, z: adjOffsetZ }
       case 'right':
-        return { x: mainGridSize.x, y: 0, z: 0 }
+        // メインの右端に隣接
+        return { x: mainMaxX + adjOffsetX, y: adjOffsetY, z: adjOffsetZ }
       case 'front':
-        return { x: 0, y: 0, z: -(adjacentGridSize.z ?? 1) }
+        // メインの前端に隣接（Z-方向）、X軸中心に配置
+        return { x: adjOffsetX - adjacentGridSize.x / 2, y: adjOffsetY, z: mainOffsetZ - adjacentGridSize.z + adjOffsetZ }
       case 'back':
-        return { x: 0, y: 0, z: mainGridSize.z ?? 1 }
+        // メインの後端に隣接（Z+方向）、X軸中心に配置
+        return { x: adjOffsetX - adjacentGridSize.x / 2, y: adjOffsetY, z: mainMaxZ + adjOffsetZ }
       default:
         return { x: 0, y: 0, z: 0 }
     }

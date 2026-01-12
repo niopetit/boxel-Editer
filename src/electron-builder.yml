@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: src
+appId: com.boxel.editor
+productName: Boxel Editor
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: src
+  executableName: boxel-editor
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

@@ -13,6 +13,14 @@ import './styles/BoxelEditor.css'
 // ハイライト色定数
 const HOVER_HIGHLIGHT_COLOR = 0x0099FF
 const SELECTION_HIGHLIGHT_COLOR = 0xFFFF00
+const RANGE_SELECTION_COLOR = 0xFF9900 // オレンジ色で範囲選択をハイライト
+
+// 範囲選択用の型
+interface SelectedFace {
+  voxelId: string
+  faceId: string
+  mesh: THREE.Mesh
+}
 
 interface BoxelEditorProps {
   gridSize: { x: number; y: number; z: number }
@@ -68,6 +76,8 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
   const updateAdjacentMeshesRef = useRef<(() => void) | null>(null)
   const previouslySelectedMeshRef = useRef<THREE.Mesh | null>(null)
   const previouslyHoveredMeshRef = useRef<THREE.Mesh | null>(null)
+  const rangeStartRef = useRef<{ x: number; y: number; z: number } | null>(null)
+  const rangeSelectedFacesRef = useRef<SelectedFace[]>([])
 
   // === アクション復元ヘルパー関数（useEffect外で定義） ===
   const applyAction = (action: {
@@ -180,6 +190,12 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     const offsetX = -Math.floor(gridSize.x / 2)
     const offsetY = 0 // 底面を y=0 に固定
     const offsetZ = -Math.floor(gridSize.z / 2)
+
+    // グリッド範囲を設定（この範囲外にはボクセルを追加できない）
+    const maxOffsetX = offsetX + gridSize.x
+    const maxOffsetY = offsetY + gridSize.y
+    const maxOffsetZ = offsetZ + gridSize.z
+    voxelMesh.setGridBounds(offsetX, maxOffsetX, offsetY, maxOffsetY, offsetZ, maxOffsetZ)
     
     // gridSize で指定されたサイズの立方体を作成
     for (let x = 0; x < gridSize.x; x++) {
@@ -304,22 +320,31 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
 
+      // 範囲選択されたメッシュかどうかをチェックするヘルパー関数
+      const isRangeSelected = (mesh: THREE.Mesh): boolean => {
+        return rangeSelectedFacesRef.current.some((selected) => selected.mesh === mesh)
+      }
+
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
         // 前回ホバーされたメッシュと異なる場合、前のホバーハイライトを解除
         if (previouslyHoveredMeshRef.current && previouslyHoveredMeshRef.current !== mesh) {
-          // 選択状態でなければハイライト解除
-          if (previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
+          // 選択状態でも範囲選択状態でもなければハイライト解除
+          if (previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current && 
+              !isRangeSelected(previouslyHoveredMeshRef.current)) {
             const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
             if (baseColor) {
               setMeshColor(previouslyHoveredMeshRef.current, baseColor)
             }
+          } else if (isRangeSelected(previouslyHoveredMeshRef.current)) {
+            // 範囲選択されている場合はオレンジ色に戻す
+            setMeshColor(previouslyHoveredMeshRef.current, RANGE_SELECTION_COLOR)
           }
         }
 
         // 新しいホバー対象が選択されていなければホバーハイライトを適用
-        if (mesh !== previouslySelectedMeshRef.current) {
+        if (mesh !== previouslySelectedMeshRef.current && !isRangeSelected(mesh)) {
           // 元の色を保存
           if (!mesh.userData.baseColor) {
             if (mesh.material instanceof THREE.MeshBasicMaterial) {
@@ -333,19 +358,78 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
           setMeshColor(mesh, HOVER_HIGHLIGHT_COLOR)
           previouslyHoveredMeshRef.current = mesh
         } else {
-          // 選択されているメッシュをホバーした場合、ホバー参照をクリア（選択色を維持）
+          // 選択されているメッシュまたは範囲選択されているメッシュをホバーした場合、ホバー参照をクリア
           previouslyHoveredMeshRef.current = null
         }
       } else {
         // ホバー対象がなくなった場合、ホバーハイライトを解除
-        if (previouslyHoveredMeshRef.current && previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
+        if (previouslyHoveredMeshRef.current && 
+            previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current &&
+            !isRangeSelected(previouslyHoveredMeshRef.current)) {
           const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
           if (baseColor) {
             setMeshColor(previouslyHoveredMeshRef.current, baseColor)
           }
+        } else if (previouslyHoveredMeshRef.current && isRangeSelected(previouslyHoveredMeshRef.current)) {
+          // 範囲選択されている場合はオレンジ色に戻す
+          setMeshColor(previouslyHoveredMeshRef.current, RANGE_SELECTION_COLOR)
         }
         previouslyHoveredMeshRef.current = null
       }
+    }
+
+    // === 範囲選択のハイライトをクリア ===
+    const clearRangeSelection = (): void => {
+      rangeSelectedFacesRef.current.forEach((selected) => {
+        const baseColor = selected.mesh.userData.baseColor
+        if (baseColor) {
+          setMeshColor(selected.mesh, baseColor)
+        }
+      })
+      rangeSelectedFacesRef.current = []
+      // 注意: rangeStartRefはここではクリアしない（Shift+クリック用に保持）
+    }
+
+    // === 範囲内のボクセル面を取得 ===
+    const getFacesInRange = (
+      start: { x: number; y: number; z: number },
+      end: { x: number; y: number; z: number }
+    ): SelectedFace[] => {
+      const minX = Math.min(start.x, end.x)
+      const maxX = Math.max(start.x, end.x)
+      const minY = Math.min(start.y, end.y)
+      const maxY = Math.max(start.y, end.y)
+      const minZ = Math.min(start.z, end.z)
+      const maxZ = Math.max(start.z, end.z)
+
+      const selectedFaces: SelectedFace[] = []
+
+      if (!meshGroupRef.current || !voxelMeshRef.current) return selectedFaces
+
+      // 範囲内のすべてのボクセルの面を検索
+      voxelMeshRef.current.getVoxels().forEach((voxel, voxelId) => {
+        const pos = voxel.position
+        if (
+          pos.x >= minX && pos.x <= maxX &&
+          pos.y >= minY && pos.y <= maxY &&
+          pos.z >= minZ && pos.z <= maxZ
+        ) {
+          // このボクセルの全ての面メッシュを検索
+          meshGroupRef.current?.children.forEach((child) => {
+            if (child instanceof THREE.Mesh) {
+              if (child.userData.voxelId === voxelId) {
+                selectedFaces.push({
+                  voxelId: voxelId,
+                  faceId: child.userData.faceId as string,
+                  mesh: child
+                })
+              }
+            }
+          })
+        }
+      })
+
+      return selectedFaces
     }
 
     // === マウスイベント: クリック ===
@@ -370,44 +454,97 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         })
       }
 
-
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
-
 
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
-
-
-        // 前回選択されたメッシュのハイライトを解除
-        if (previouslySelectedMeshRef.current && previouslySelectedMeshRef.current !== mesh) {
-          const baseColor = previouslySelectedMeshRef.current.userData.baseColor
-          if (baseColor) {
-            setMeshColor(previouslySelectedMeshRef.current, baseColor)
-          }
-          previouslyHoveredMeshRef.current = null
-        }
 
         // メッシュのuserDataからボクセルIDと面IDを取得
         if (mesh.userData.voxelId && mesh.userData.faceId) {
           const voxelId = mesh.userData.voxelId as string
           const faceId = mesh.userData.faceId as string
 
-          setSelectedVoxelId(voxelId)
+          // ボクセルの位置を取得
+          const voxel = voxelMeshRef.current?.getVoxels().get(voxelId)
+          if (!voxel) return
+          const currentPos = voxel.position
 
-          // 元の色を保存（baseColorがなければ現在の色を保存）
-          if (!mesh.userData.baseColor) {
-            mesh.userData.baseColor = getMeshColor(mesh)
-          }
-          // 黄色でハイライト
-          setMeshColor(mesh, SELECTION_HIGHLIGHT_COLOR)
-          previouslySelectedMeshRef.current = mesh
-          previouslyHoveredMeshRef.current = null
+          // Shiftキーが押されている場合は範囲選択
+          if (event.shiftKey && rangeStartRef.current) {
+            // 前回の範囲選択をクリア
+            clearRangeSelection()
 
-          // 選択された面を保存
-          if (canvasRef.current) {
-            ;(canvasRef.current as any).selectedFaceId = faceId
-            ;(canvasRef.current as any).selectedVoxelId = voxelId
+            // 範囲内の面を取得
+            const facesInRange = getFacesInRange(rangeStartRef.current, currentPos)
+
+            // 範囲選択をハイライト
+            facesInRange.forEach((selected) => {
+              if (!selected.mesh.userData.baseColor) {
+                selected.mesh.userData.baseColor = getMeshColor(selected.mesh)
+              }
+              setMeshColor(selected.mesh, RANGE_SELECTION_COLOR)
+            })
+
+            rangeSelectedFacesRef.current = facesInRange
+
+            // 選択状態を更新
+            setSelectedVoxelId(voxelId)
+            if (canvasRef.current) {
+              ;(canvasRef.current as any).selectedFaceId = faceId
+              ;(canvasRef.current as any).selectedVoxelId = voxelId
+              ;(canvasRef.current as any).rangeSelected = true
+            }
+          } else {
+            // 通常クリック: 範囲選択をクリアして単一選択
+            clearRangeSelection()
+
+            // 前回選択されたメッシュのハイライトを解除
+            if (previouslySelectedMeshRef.current && previouslySelectedMeshRef.current !== mesh) {
+              const baseColor = previouslySelectedMeshRef.current.userData.baseColor
+              if (baseColor) {
+                setMeshColor(previouslySelectedMeshRef.current, baseColor)
+              }
+              previouslyHoveredMeshRef.current = null
+            }
+
+            setSelectedVoxelId(voxelId)
+
+            // 元の色を保存（baseColorがなければ現在の色を保存）
+            if (!mesh.userData.baseColor) {
+              mesh.userData.baseColor = getMeshColor(mesh)
+            }
+            // 黄色でハイライト
+            setMeshColor(mesh, SELECTION_HIGHLIGHT_COLOR)
+            previouslySelectedMeshRef.current = mesh
+            previouslyHoveredMeshRef.current = null
+
+            // 選択された面を保存
+            if (canvasRef.current) {
+              ;(canvasRef.current as any).selectedFaceId = faceId
+              ;(canvasRef.current as any).selectedVoxelId = voxelId
+              ;(canvasRef.current as any).rangeSelected = false
+            }
+
+            // 範囲選択の起点として保存
+            rangeStartRef.current = { ...currentPos }
           }
+        }
+      } else {
+        // 何もクリックしていない場合は選択をクリア
+        clearRangeSelection()
+        if (previouslySelectedMeshRef.current) {
+          const baseColor = previouslySelectedMeshRef.current.userData.baseColor
+          if (baseColor) {
+            setMeshColor(previouslySelectedMeshRef.current, baseColor)
+          }
+          previouslySelectedMeshRef.current = null
+        }
+        rangeStartRef.current = null
+        setSelectedVoxelId(null)
+        if (canvasRef.current) {
+          ;(canvasRef.current as any).selectedFaceId = null
+          ;(canvasRef.current as any).selectedVoxelId = null
+          ;(canvasRef.current as any).rangeSelected = false
         }
       }
     }
@@ -454,20 +591,75 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
   const handleAddVoxel = (): void => {
     // canvas に保存された値を使う
-    const selectedVoxelId = (canvasRef.current as any)?.selectedVoxelId
+    const selectedVoxelIdVal = (canvasRef.current as any)?.selectedVoxelId
     const selectedFaceId = (canvasRef.current as any)?.selectedFaceId
+    const isRangeSelected = (canvasRef.current as any)?.rangeSelected
     
-    if (!selectedVoxelId || !voxelMeshRef.current) {
+    if (!voxelMeshRef.current) {
+      return
+    }
+
+    // 範囲選択の場合は複数のボクセルを追加
+    if (isRangeSelected && rangeSelectedFacesRef.current.length > 0) {
+      const addedVoxels: any[] = []
+      const processedVoxels = new Set<string>() // 重複防止
+
+      rangeSelectedFacesRef.current.forEach((selected) => {
+        const voxelId = selected.voxelId
+        const faceId = selected.faceId
+
+        // 同じボクセルの同じ面には1回だけ追加
+        const key = `${voxelId}-${faceId}`
+        if (processedVoxels.has(key)) return
+        processedVoxels.add(key)
+
+        const voxel = voxelMeshRef.current?.getVoxels().get(voxelId)
+        if (voxel) {
+          const targetFace = voxel.faces.find((f) => f.id === faceId)
+          if (targetFace) {
+            const newVoxel = voxelMeshRef.current?.addVoxelAtFaceId(voxelId, targetFace.id)
+            if (newVoxel) {
+              addedVoxels.push(newVoxel)
+              // 各追加をアクション履歴に追加
+              actionHistoryRef.current?.pushAction(
+                'addVoxel',
+                {
+                  voxelId: newVoxel.id,
+                  position: newVoxel.position,
+                  adjacentDirection: targetFace.normal,
+                  voxelData: newVoxel
+                },
+                `ボクセルを追加: ${newVoxel.id}`,
+                'main'
+              )
+            }
+          }
+        }
+      })
+
+      if (addedVoxels.length > 0) {
+        updateVoxelMeshRef.current?.()
+        // 範囲選択をクリア
+        rangeSelectedFacesRef.current = []
+        rangeStartRef.current = null
+        ;(canvasRef.current as any).rangeSelected = false
+        updateUndoRedoButtons()
+      }
       return
     }
     
-    const voxel = voxelMeshRef.current.getVoxels().get(selectedVoxelId)
+    // 単一選択の場合
+    if (!selectedVoxelIdVal) {
+      return
+    }
+
+    const voxel = voxelMeshRef.current.getVoxels().get(selectedVoxelIdVal)
     if (voxel && voxel.faces.length > 0) {
       const targetFaceId = selectedFaceId || voxel.faces[0].id
       const targetFace = voxel.faces.find((f) => f.id === targetFaceId)
       
       if (targetFace) {
-        const newVoxel = voxelMeshRef.current.addVoxelAtFaceId(selectedVoxelId, targetFace.id)
+        const newVoxel = voxelMeshRef.current.addVoxelAtFaceId(selectedVoxelIdVal, targetFace.id)
         
         if (newVoxel) {
           // アクション履歴に追加
@@ -493,24 +685,69 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
   }
 
   const handleDeleteVoxel = (): void => {
-    const selectedVoxelId = (canvasRef.current as any)?.selectedVoxelId
+    const selectedVoxelIdVal = (canvasRef.current as any)?.selectedVoxelId
+    const isRangeSelected = (canvasRef.current as any)?.rangeSelected
     
-    if (!selectedVoxelId || !voxelMeshRef.current) {
+    if (!voxelMeshRef.current) {
+      return
+    }
+
+    // 範囲選択の場合は複数のボクセルを削除
+    if (isRangeSelected && rangeSelectedFacesRef.current.length > 0) {
+      const deletedVoxelIds = new Set<string>()
+      
+      // まず削除対象のボクセルIDを収集
+      rangeSelectedFacesRef.current.forEach((selected) => {
+        deletedVoxelIds.add(selected.voxelId)
+      })
+
+      // 削除を実行
+      deletedVoxelIds.forEach((voxelId) => {
+        const snapshot = voxelMeshRef.current?.deleteVoxel(voxelId)
+        if (snapshot) {
+          // アクション履歴に追加
+          actionHistoryRef.current?.pushAction(
+            'deleteVoxel',
+            {
+              voxelId: voxelId,
+              position: snapshot.position,
+              voxelData: snapshot
+            },
+            `ボクセルを削除: ${voxelId}`,
+            'main'
+          )
+        }
+      })
+
+      updateVoxelMeshRef.current?.()
+      // 範囲選択をクリア
+      rangeSelectedFacesRef.current = []
+      rangeStartRef.current = null
+      previouslySelectedMeshRef.current = null
+      ;(canvasRef.current as any).selectedVoxelId = null
+      ;(canvasRef.current as any).rangeSelected = false
+      setSelectedVoxelId(null)
+      updateUndoRedoButtons()
       return
     }
     
-    const snapshot = voxelMeshRef.current.deleteVoxel(selectedVoxelId)
+    // 単一選択の場合
+    if (!selectedVoxelIdVal) {
+      return
+    }
+
+    const snapshot = voxelMeshRef.current.deleteVoxel(selectedVoxelIdVal)
     if (snapshot) {
       
       // アクション履歴に追加
       actionHistoryRef.current?.pushAction(
         'deleteVoxel',
         {
-          voxelId: selectedVoxelId,
+          voxelId: selectedVoxelIdVal,
           position: snapshot.position,
           voxelData: snapshot
         },
-        `ボクセルを削除: ${selectedVoxelId}`,
+        `ボクセルを削除: ${selectedVoxelIdVal}`,
         'main'
       )
       
@@ -523,30 +760,77 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
   const handlePaintFace = (): void => {
     // state ではなく canvas に保存された値を使う
-    const voxelId = (canvasRef.current as any)?.selectedVoxelId
-    const faceId = (canvasRef.current as any)?.selectedFaceId
+    const voxelIdVal = (canvasRef.current as any)?.selectedVoxelId
+    const faceIdVal = (canvasRef.current as any)?.selectedFaceId
+    const isRangeSelected = (canvasRef.current as any)?.rangeSelected
     
-    if (!voxelId || !voxelMeshRef.current || !meshGroupRef.current) {
+    if (!voxelMeshRef.current || !meshGroupRef.current) {
       return
     }
-    
-    const voxel = voxelMeshRef.current.getVoxels().get(voxelId)
+
+    // 範囲選択の場合は複数の面を着色
+    if (isRangeSelected && rangeSelectedFacesRef.current.length > 0) {
+      rangeSelectedFacesRef.current.forEach((selected) => {
+        const voxel = voxelMeshRef.current?.getVoxels().get(selected.voxelId)
+        if (voxel) {
+          const targetFace = voxel.faces.find((f) => f.id === selected.faceId)
+          if (targetFace) {
+            const previousColor = targetFace.color || '#808080'
+            voxelMeshRef.current?.colorSpecificFace(selected.voxelId, targetFace.id, selectedColor)
+            voxelMeshRef.current?.updateMeshColor(meshGroupRef.current!, selected.voxelId, targetFace.id, selectedColor)
+            
+            // baseColorを更新
+            const colorValue = parseInt(selectedColor.replace('#', ''), 16)
+            selected.mesh.userData.baseColor = colorValue
+
+            // アクション履歴に追加
+            actionHistoryRef.current?.pushAction(
+              'colorFace',
+              {
+                faceId: targetFace.id,
+                voxelId: selected.voxelId,
+                previousColor: previousColor,
+                newColor: selectedColor
+              },
+              `面を着色: ${selectedColor}`,
+              'main'
+            )
+          }
+        }
+      })
+
+      // 範囲選択をクリア
+      rangeSelectedFacesRef.current = []
+      rangeStartRef.current = null
+      previouslySelectedMeshRef.current = null
+      ;(canvasRef.current as any).rangeSelected = false
+      setSelectedVoxelId(null)
+      updateUndoRedoButtons()
+      return
+    }
+
+    // 単一選択の場合
+    if (!voxelIdVal) {
+      return
+    }
+
+    const voxel = voxelMeshRef.current.getVoxels().get(voxelIdVal)
     if (voxel) {
       // 選択された面の ID を取得
-      const targetFace = faceId
-        ? voxel.faces.find((f) => f.id === faceId)
+      const targetFace = faceIdVal
+        ? voxel.faces.find((f) => f.id === faceIdVal)
         : voxel.faces[0]
 
       if (targetFace) {
         const previousColor = targetFace.color || '#808080'
-        voxelMeshRef.current.colorSpecificFace(voxelId, targetFace.id, selectedColor)
+        voxelMeshRef.current.colorSpecificFace(voxelIdVal, targetFace.id, selectedColor)
         // メッシュの色を直接更新
-        voxelMeshRef.current.updateMeshColor(meshGroupRef.current, voxelId, targetFace.id, selectedColor)
+        voxelMeshRef.current.updateMeshColor(meshGroupRef.current, voxelIdVal, targetFace.id, selectedColor)
         
         // 更新されたメッシュの baseColor を新しい色に設定
         meshGroupRef.current.children.forEach((child) => {
           if (child instanceof THREE.Mesh) {
-            if (child.userData.voxelId === voxelId && child.userData.faceId === targetFace.id) {
+            if (child.userData.voxelId === voxelIdVal && child.userData.faceId === targetFace.id) {
               const colorValue = parseInt(selectedColor.replace('#', ''), 16)
               child.userData.baseColor = colorValue
             }
@@ -558,7 +842,7 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
           'colorFace',
           {
             faceId: targetFace.id,
-            voxelId: voxelId,
+            voxelId: voxelIdVal,
             previousColor: previousColor,
             newColor: selectedColor
           },
@@ -680,7 +964,8 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         filePath,
         direction as 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
         gridSize.x,
-        gridSize.y
+        gridSize.y,
+        gridSize.z
       )
 
       if (adjObj) {
@@ -780,7 +1065,7 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         </div>
 
         <div className="instructions">
-          <p>クリック=選択 · WASD=回転 · 矢印=パン · Q=ズーム</p>
+          <p>クリック=選択 · Shift+クリック=範囲選択 · WASD=回転 · 矢印=パン · Q=ズーム</p>
         </div>
 
         <canvas
