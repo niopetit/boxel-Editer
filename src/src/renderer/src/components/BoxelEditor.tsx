@@ -148,8 +148,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     voxelMeshRef.current = voxelMesh
 
     // === 初期ボクセルを立方体で追加、底面を y=0 に固定 ===
-    console.log('[BoxelEditor] VoxelMesh created')
-    console.log(`[BoxelEditor] Grid size: ${gridSize.x} x ${gridSize.y} x ${gridSize.z}`)
     
     // 底面が y=0 に、X-Z 平面の中心が (0,0) になるようにオフセットを計算
     const offsetX = -Math.floor(gridSize.x / 2)
@@ -168,14 +166,10 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         }
       }
     }
-    console.log(`[BoxelEditor] Added ${gridSize.x * gridSize.y * gridSize.z} voxels (${gridSize.x}×${gridSize.y}×${gridSize.z} cube)`)
-    console.log(`[BoxelEditor] Bottom face at y=0, X-Z center at (0, 0)`)
-    console.log(`[BoxelEditor] Total voxels: ${voxelMesh.getVoxelCount()}`)
 
     // === メッシュをシーンに追加 ===
     const meshGroup = new THREE.Group()
     const threeMesh = voxelMesh.toThreeMesh()
-    console.log(`[BoxelEditor] Three.js mesh created with ${threeMesh.children.length} children`)
     
     // threeMeshはGROUPなので、その子要素をmeshGroupに直接追加
     // 注: children は リアルタイムコレクションなので、スプレッド演算子でコピーを作成
@@ -183,17 +177,13 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     initialChildrenCopy.forEach((child) => {
       meshGroup.add(child)
     })
-    console.log(`[BoxelEditor] Added ${meshGroup.children.length} meshes to meshGroup`)
     
     scene.add(meshGroup)
     meshGroupRef.current = meshGroup
-    console.log(`[BoxelEditor] Mesh added to scene`)
 
     // === メッシュ更新ヘルパー関数 ===
     const updateVoxelMesh = (): void => {
       if (!meshGroupRef.current || !voxelMeshRef.current) return
-      console.log('[updateVoxelMesh] Updating mesh...')
-      console.log(`[updateVoxelMesh] Before clear: meshGroup has ${meshGroupRef.current.children.length} children`)
       
       // ハイライト参照をクリア
       previouslySelectedMeshRef.current = null
@@ -201,11 +191,9 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       
       // 既存のメッシュをクリア
       meshGroupRef.current.clear()
-      console.log(`[updateVoxelMesh] After clear: meshGroup has ${meshGroupRef.current.children.length} children`)
       
       // 新しいメッシュを生成
       const newMesh = voxelMeshRef.current.toThreeMesh()
-      console.log(`[updateVoxelMesh] Generated newMesh with ${newMesh.children.length} children`)
       
       // newMeshはGROUPなので、その子要素をmeshGroupに直接追加
       // 注: children は リアルタイムコレクションなので、スプレッド演算子でコピーを作成
@@ -214,8 +202,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         meshGroupRef.current?.add(child)
       })
       
-      console.log(`[updateVoxelMesh] After add: meshGroup has ${meshGroupRef.current.children.length} children`)
-      console.log(`[updateVoxelMesh] Updated with ${voxelMeshRef.current.getVoxelCount()} voxels`)
       setVertexCount(voxelMeshRef.current.getVertexCount())
       setVoxelCount(voxelMeshRef.current.getVoxelCount())
     }
@@ -249,7 +235,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         adjacentMeshGroupRef.current?.add(adjObj.mesh)
       })
 
-      console.log(`[updateAdjacentMeshes] Updated ${adjacentObjs.length} adjacent objects`)
     }
     updateAdjacentMeshesRef.current = updateAdjacentMeshes
 
@@ -350,7 +335,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
     // === マウスイベント: クリック ===
     const handleMouseClick = (event: MouseEvent): void => {
-      console.log('[handleMouseClick] Canvas clicked')
       if (!cameraRef.current || !rendererRef.current || !sceneRef.current) return
 
       const canvasElement = rendererRef.current.domElement as HTMLCanvasElement
@@ -371,11 +355,9 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         })
       }
 
-      console.log('[handleMouseClick] Total meshes in meshGroup:', meshes.length)
 
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
 
-      console.log('[handleMouseClick] Intersects:', intersects.length)
 
       // メッシュの色を設定するヘルパー関数
       const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
@@ -403,8 +385,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
-        console.log('[handleMouseClick] Hit object:', mesh.name || 'unnamed')
-        console.log('[handleMouseClick] Hit object userData:', mesh.userData)
 
         // 前回選択されたメッシュのハイライトを解除
         if (previouslySelectedMeshRef.current && previouslySelectedMeshRef.current !== mesh) {
@@ -421,7 +401,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
           const faceId = mesh.userData.faceId as string
 
           setSelectedVoxelId(voxelId)
-          console.log('✓ Selected voxel:', voxelId, 'face:', faceId)
 
           // 元の色を保存（baseColorがなければ現在の色を保存）
           if (!mesh.userData.baseColor) {
@@ -443,16 +422,12 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
             if (voxel) {
               const face = voxel.faces.find((f) => f.id === faceId)
               if (face && face.color) {
-                console.log('[handleMouseClick] Face color:', face.color)
               }
             }
           }
         } else {
-          console.log('[handleMouseClick] WARNING: userData missing or incomplete')
-          console.log('[handleMouseClick] Available keys:', Object.keys(mesh.userData))
         }
       } else {
-        console.log('[handleMouseClick] No intersection detected')
       }
     }
 
@@ -509,11 +484,9 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     const selectedFaceId = (canvasRef.current as any)?.selectedFaceId
     
     if (!selectedVoxelId || !voxelMeshRef.current) {
-      console.log('[handleAddVoxel] No voxel selected')
       return
     }
     
-    console.log('[handleAddVoxel] Adding voxel from:', selectedVoxelId, 'face:', selectedFaceId)
     const voxel = voxelMeshRef.current.getVoxels().get(selectedVoxelId)
     if (voxel && voxel.faces.length > 0) {
       const targetFaceId = selectedFaceId || voxel.faces[0].id
@@ -521,7 +494,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       
       if (targetFace) {
         const newVoxel = voxelMeshRef.current.addVoxelAtFaceId(selectedVoxelId, targetFace.id)
-        console.log('[handleAddVoxel] Result:', newVoxel?.id || 'null')
         
         if (newVoxel) {
           // アクション履歴に追加
@@ -550,14 +522,11 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     const selectedVoxelId = (canvasRef.current as any)?.selectedVoxelId
     
     if (!selectedVoxelId || !voxelMeshRef.current) {
-      console.log('[handleDeleteVoxel] No voxel selected')
       return
     }
     
-    console.log('[handleDeleteVoxel] Deleting voxel:', selectedVoxelId)
     const snapshot = voxelMeshRef.current.deleteVoxel(selectedVoxelId)
     if (snapshot) {
-      console.log('[handleDeleteVoxel] Voxel deleted successfully')
       
       // アクション履歴に追加
       actionHistoryRef.current?.pushAction(
@@ -584,11 +553,9 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     const faceId = (canvasRef.current as any)?.selectedFaceId
     
     if (!voxelId || !voxelMeshRef.current || !meshGroupRef.current) {
-      console.log('[handlePaintFace] No voxel selected')
       return
     }
     
-    console.log('[handlePaintFace] Painting voxel:', voxelId, 'face:', faceId, 'color:', selectedColor)
     const voxel = voxelMeshRef.current.getVoxels().get(voxelId)
     if (voxel) {
       // 選択された面の ID を取得
@@ -597,7 +564,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
         : voxel.faces[0]
 
       if (targetFace) {
-        console.log('[handlePaintFace] Coloring face:', targetFace.id)
         const previousColor = targetFace.color || '#808080'
         voxelMeshRef.current.colorSpecificFace(voxelId, targetFace.id, selectedColor)
         // メッシュの色を直接更新
@@ -639,7 +605,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       const defaultFileName = `boxel_project_${new Date().toISOString().slice(0, 10)}_${new Date().getHours().toString().padStart(2, '0')}${new Date().getMinutes().toString().padStart(2, '0')}.glw`
       const result = await window.api.showSaveDialog(defaultFileName)
       if (result.canceled || !result.filePath) {
-        console.log('Save dialog cancelled')
         return
       }
 
@@ -666,7 +631,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       // ファイル開くダイアログを表示
       const result = await window.api.showOpenDialog()
       if (result.canceled || result.filePaths.length === 0) {
-        console.log('Open dialog cancelled')
         return
       }
 
@@ -712,7 +676,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       const result = await window.api.showExportDialog(defaultFileName)
       
       if (result.canceled || !result.filePath) {
-        console.log('Export dialog cancelled')
         return
       }
 
@@ -733,14 +696,12 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
   // === 隣接オブジェクトハンドラー ===
   const handleAddAdjacentObject = async (direction: string, filePath: string): Promise<void> => {
-    console.log('[BoxelEditor] handleAddAdjacentObject called:', direction, filePath)
     if (!adjacentObjectManagerRef.current) {
       console.error('[BoxelEditor] adjacentObjectManagerRef.current is null')
       return
     }
 
     try {
-      console.log('[BoxelEditor] Calling addAdjacentObject...')
       const adjObj = await adjacentObjectManagerRef.current.addAdjacentObject(
         filePath,
         direction as 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
@@ -751,7 +712,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       if (adjObj) {
         setAdjacentObjects(adjacentObjectManagerRef.current.getAllAdjacentObjects())
         updateAdjacentMeshesRef.current?.()
-        console.log('[BoxelEditor] Adjacent object added:', adjObj.id)
       } else {
         console.error('[BoxelEditor] adjObj is null')
         alert('隣接オブジェクトの追加に失敗しました')
@@ -768,7 +728,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     if (adjacentObjectManagerRef.current.removeAdjacentObject(objectId)) {
       setAdjacentObjects(adjacentObjectManagerRef.current.getAllAdjacentObjects())
       updateAdjacentMeshesRef.current?.()
-      console.log('Adjacent object removed:', objectId)
     }
   }
 
@@ -793,7 +752,13 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
   }
 
   return (
-    <div className="boxel-editor">
+    <div className="boxel-editor" onDoubleClick={(e) => {
+      // canvas以外でのダブルクリックを無効化
+      if ((e.target as HTMLElement).tagName !== 'CANVAS') {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }}>
       <div className="main-content">
         <div className="toolbar">
         <button onClick={handleAddVoxel} disabled={!selectedVoxelId}>

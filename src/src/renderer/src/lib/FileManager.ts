@@ -187,12 +187,10 @@ export class FileManager {
       // IPC通信を使用してファイルを保存
       if (window.api) {
         await window.api.saveProjectFile(filePath, jsonString)
-        console.log('GLW file saved:', filePath)
         return true
       } else {
         // フォールバック: localStorage に保存
         localStorage.setItem(`glw_${Date.now()}`, jsonString)
-        console.log('GLW file saved to localStorage')
         return true
       }
     } catch (error) {
@@ -236,7 +234,6 @@ export class FileManager {
         return null
       }
 
-      console.log('GLW file loaded:', filePath)
       return glwFile
     } catch (error) {
       console.error('Failed to load GLW file:', error)
@@ -332,11 +329,9 @@ export class FileManager {
           content: gltfString,
           format: options.format
         })
-        console.log('GLTF file exported:', filePath)
         return true
       } else {
         localStorage.setItem(`gltf_${Date.now()}`, gltfString)
-        console.log('GLTF file exported to localStorage')
         return true
       }
     } catch (error) {
@@ -416,7 +411,6 @@ export class FileManager {
    * - マテリアル: フェイスカラー対応
    */
   private static createGltfStructure(voxels: Map<string, Voxel>, colorMap: Map<string, string>): any {
-    console.log('[GLTF Export] Starting export, voxels count:', voxels.size)
     
     const asset = {
       generator: 'Boxel Editor',
@@ -424,7 +418,6 @@ export class FileManager {
     }
 
     if (voxels.size === 0) {
-      console.log('[GLTF Export] No voxels to export')
       // 空のGLTF
       return {
         asset,
@@ -445,7 +438,6 @@ export class FileManager {
     let skippedFaces = 0
 
     voxels.forEach(voxel => {
-      console.log('[GLTF Export] Processing voxel:', voxel.id, 'at', voxel.position, 'faces:', voxel.faces.length)
       voxel.faces.forEach(face => {
         totalFaces++
         // 内部面をスキップ（隣接ボクセルがある面）
@@ -465,8 +457,6 @@ export class FileManager {
       })
     })
 
-    console.log('[GLTF Export] Total faces:', totalFaces, 'Skipped (internal):', skippedFaces)
-    console.log('[GLTF Export] Color groups:', colorGroups.size)
 
     // 頂点カラーを使用するため、頂点ごとにデータを生成（重複を許容）
     const allPositions: number[] = []
@@ -524,10 +514,8 @@ export class FileManager {
       })
     })
 
-    console.log('[GLTF Export] Total vertices:', allPositions.length / 3, 'Total indices:', allIndices.length)
 
     if (allPositions.length === 0) {
-      console.log('[GLTF Export] No positions generated, returning empty GLTF')
       return {
         asset,
         scene: 0,
@@ -660,7 +648,6 @@ export class FileManager {
       name: 'VertexColorMaterial'
     }]
 
-    console.log('[GLTF Export] Export completed successfully')
 
     return {
       asset,

@@ -18,19 +18,9 @@ export class AdjacentObjectManager {
   private adjacentObjects: Map<string, AdjacentObjectWithMesh> = new Map()
   private objectIdCounter: number = 0
   private gltfLoader: GLTFLoader
-  private grayscaleMaterial: THREE.MeshStandardMaterial
 
   constructor() {
     this.gltfLoader = new GLTFLoader()
-    // 共有マテリアル（グレースケール半透明）を作成
-    this.grayscaleMaterial = new THREE.MeshStandardMaterial({
-      color: 0x888888,
-      metalness: 0.0,
-      roughness: 1.0,
-      transparent: true,
-      opacity: 0.6,
-      side: THREE.DoubleSide
-    })
   }
 
   /**
@@ -42,19 +32,15 @@ export class AdjacentObjectManager {
     mainGridSizeX: number,
     mainGridSizeY: number
   ): Promise<AdjacentObjectWithMesh | null> {
-    console.log('[AdjacentObjectManager] addAdjacentObject called:', filePath, direction)
     try {
       // メインプロセス経由でGLTFファイルを読み込み
-      console.log('[AdjacentObjectManager] Calling loadGltfFile...')
       const fileData = await window.api.loadGltfFile(filePath)
-      console.log('[AdjacentObjectManager] loadGltfFile result:', fileData ? 'success' : 'null')
       if (!fileData) {
         console.error('Failed to load GLTF file via IPC:', filePath)
         return null
       }
 
       // Base64からGLTFを読み込み
-      console.log('[AdjacentObjectManager] Parsing GLTF, extension:', fileData.extension)
       const gltf = await this.loadGltfFromBase64(fileData.data, fileData.extension)
       if (!gltf) {
         console.error('Failed to parse GLTF data:', filePath)
@@ -91,7 +77,6 @@ export class AdjacentObjectManager {
       }
 
       this.adjacentObjects.set(adjacentObject.id, adjacentObject)
-      console.log('Adjacent object added:', adjacentObject.id, 'size:', size)
 
       return adjacentObject
     } catch (error) {
@@ -106,7 +91,6 @@ export class AdjacentObjectManager {
   private loadGltfFromBase64(base64Data: string, extension: string): Promise<GLTF | null> {
     return new Promise((resolve) => {
       try {
-        console.log('[GLTF] Loading from base64, extension:', extension)
         
         // Base64をArrayBufferに変換
         const binaryString = atob(base64Data)
@@ -116,16 +100,13 @@ export class AdjacentObjectManager {
         }
         const arrayBuffer = bytes.buffer
 
-        console.log('[GLTF] ArrayBuffer size:', arrayBuffer.byteLength)
 
         if (extension === 'glb') {
           // GLBファイル（バイナリ）
-          console.log('[GLTF] Parsing as GLB binary')
           this.gltfLoader.parse(
             arrayBuffer,
             '',
             (gltf) => {
-              console.log('[GLTF] GLB parsed successfully')
               resolve(gltf)
             },
             (error) => {
@@ -135,12 +116,10 @@ export class AdjacentObjectManager {
           )
         } else {
           // GLTFファイル（JSON）- ArrayBufferをそのまま渡す
-          console.log('[GLTF] Parsing as GLTF JSON')
           this.gltfLoader.parse(
             arrayBuffer,
             '',
             (gltf) => {
-              console.log('[GLTF] GLTF parsed successfully')
               resolve(gltf)
             },
             (error) => {
@@ -192,33 +171,6 @@ export class AdjacentObjectManager {
   }
 
   /**
-   * グレースケールメッシュを作成（パフォーマンス最適化済み）
-   */
-  private createGrayscaleMesh(scene: THREE.Object3D): THREE.Group {
-    const group = new THREE.Group()
-    
-    // シーン内のすべてのメッシュを走査
-    scene.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        // ジオメトリをクローン（元のファイルを変更しないため）
-        const clonedGeometry = child.geometry.clone()
-        
-        // ワールド変換を適用
-        child.updateWorldMatrix(true, false)
-        clonedGeometry.applyMatrix4(child.matrixWorld)
-        
-        // 共有マテリアルを使用して新しいメッシュを作成
-        const newMesh = new THREE.Mesh(clonedGeometry, this.grayscaleMaterial)
-        newMesh.userData.isAdjacentObject = true
-        
-        group.add(newMesh)
-      }
-    })
-
-    return group
-  }
-
-  /**
    * 隣接オブジェクトを削除
    */
   removeAdjacentObject(objectId: string): boolean {
@@ -233,7 +185,6 @@ export class AdjacentObjectManager {
         })
       }
       this.adjacentObjects.delete(objectId)
-      console.log('Adjacent object removed:', objectId)
       return true
     }
     return false
@@ -284,7 +235,6 @@ export class AdjacentObjectManager {
     // Y軸周りに時計回りに90度回転（-π/2）
     obj.mesh.rotation.y -= Math.PI / 2
 
-    console.log(`Adjacent object ${objectId} rotated, new Y rotation: ${obj.mesh.rotation.y}`)
     return true
   }
 
@@ -446,7 +396,5 @@ export class AdjacentObjectManager {
       }
     })
     this.adjacentObjects.clear()
-    // 共有マテリアルを解放
-    this.grayscaleMaterial.dispose()
   }
 }

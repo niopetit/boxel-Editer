@@ -30,7 +30,6 @@ export class ActionHistory {
       targetObject
     }
 
-    console.log('[ActionHistory.pushAction] Action pushed:', action.type, 'undoStack size:', this.undoStack.length + 1)
 
     // リドゥスタックをクリア（新しい操作が行われたため）
     this.redoStack = []

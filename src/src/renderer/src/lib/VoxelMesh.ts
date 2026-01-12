@@ -44,7 +44,6 @@ export class VoxelMesh {
     this.maxY = maxY
     this.minZ = minZ
     this.maxZ = maxZ
-    console.log(`[setGridBounds] Grid bounds set: X[${minX}, ${maxX}), Y[${minY}, ${maxY}), Z[${minZ}, ${maxZ})`)
   }
 
   /**
@@ -194,10 +193,8 @@ export class VoxelMesh {
         break
     }
 
-    console.log(`[addVoxelAtFaceId] Adding voxel at position`, newPosition, 'from voxel', voxelId, 'face', faceId)
     const result = this.addVoxel(newPosition)
     if (result) {
-      console.log(`[addVoxelAtFaceId] Successfully added new voxel: ${result.id}`)
     }
     return result
   }
@@ -248,10 +245,8 @@ export class VoxelMesh {
         break
     }
 
-    console.log(`[addVoxelAtFace] Adding voxel at position`, newPosition, 'from voxel', sourceVoxelId, 'face', face.id)
     const result = this.addVoxel(newPosition)
     if (result) {
-      console.log(`[addVoxelAtFace] Successfully added new voxel: ${result.id}`)
     }
     return result
   }
@@ -367,7 +362,6 @@ export class VoxelMesh {
     this.colorMap.clear()
     this.vertexIdCounter = 0
     this.voxelIdCounter = 0
-    console.log('[VoxelMesh] All voxels cleared')
   }
 
   /**
@@ -401,18 +395,15 @@ export class VoxelMesh {
             const newMaterial = this.createSelectionMaterial(rgbColor.r, rgbColor.g, rgbColor.b)
             ;(newMaterial as any).userData = { isSelection: true }
             mesh.material = newMaterial
-            console.log(`[updateMeshColor] Applied selection material for ${voxelId}/${faceId}`)
           } else {
             // 通常の色更新
             if (mesh.material instanceof THREE.MeshBasicMaterial || mesh.material instanceof THREE.MeshPhongMaterial) {
               mesh.material.color.copy(colorObj)
-              console.log(`[updateMeshColor] Updated color for ${voxelId}/${faceId}`)
             }
             // ShaderMaterial の場合
             else if (mesh.material instanceof THREE.ShaderMaterial) {
               if (mesh.material.uniforms.uColor) {
                 mesh.material.uniforms.uColor.value.copy(colorObj)
-                console.log(`[updateMeshColor] Updated shader color for ${voxelId}/${faceId}`)
               }
             }
           }
@@ -436,7 +427,6 @@ export class VoxelMesh {
    */
   toThreeMesh(): THREE.Group {
     const group = new THREE.Group()
-    console.log(`[toThreeMesh] Starting with ${this.voxels.size} voxels`)
 
     let meshCount = 0
 
@@ -509,7 +499,6 @@ export class VoxelMesh {
       })
     })
 
-    console.log(`[toThreeMesh] Created ${meshCount} face meshes in group`)
     return group
   }
 
