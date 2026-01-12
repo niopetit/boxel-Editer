@@ -1,20 +1,19 @@
-// Vertex Highlight Fragment Shader
-// 頂点ハイライト表示用のフラグメントシェーダー
+#version 300 es
+precision highp float;
 
-varying float vAlpha;
+// 入力
+in float vAlpha;
 
+// uniform
 uniform vec3 uVertexColor;
 uniform float uGlow;
 
+// 出力
+out vec4 outColor;
+
 void main() {
-  // ポイントスプライトで円形に描画
-  vec2 cxy = 2.0 * gl_PointCoord - 1.0;
-  float r = dot(cxy, cxy);
-  if (r > 1.0) discard;
+  // 頂点カラーにグロウ効果を追加
+  vec3 glowColor = uVertexColor * (1.0 + uGlow);
   
-  // グロー効果
-  float glow = uGlow * (1.0 - r);
-  vec3 glowColor = uVertexColor + glow;
-  
-  gl_FragColor = vec4(glowColor, vAlpha);
+  outColor = vec4(glowColor, vAlpha);
 }

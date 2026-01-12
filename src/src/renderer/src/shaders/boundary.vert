@@ -4,23 +4,22 @@ precision highp float;
 // 入力
 in vec3 position;
 in vec3 normal;
+in vec3 barycentric;
 
 // uniform
 uniform mat4 uModelMatrix;
 uniform mat4 uViewMatrix;
 uniform mat4 uProjectionMatrix;
 uniform mat3 uNormalMatrix;
-uniform vec3 uFaceColor;
 
 // 出力
-out vec3 vPosition;
+out vec3 vBarycentric;
 out vec3 vNormal;
-out vec3 vColor;
 
 void main() {
-  vPosition = vec3(uModelMatrix * vec4(position, 1.0));
+  vec3 worldPosition = vec3(uModelMatrix * vec4(position, 1.0));
   vNormal = normalize(uNormalMatrix * normal);
-  vColor = uFaceColor;
+  vBarycentric = barycentric;
   
-  gl_Position = uProjectionMatrix * uViewMatrix * vec4(vPosition, 1.0);
+  gl_Position = uProjectionMatrix * uViewMatrix * vec4(worldPosition, 1.0);
 }

@@ -1,11 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import icon from '../../resources/icon.png?asset'
+
+let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
@@ -13,15 +16,18 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      webSecurity: false  // GLTFのdata: URI読み込みを許可
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  mainWindow = window
+
+  window.on('ready-to-show', () => {
+    window.show()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
@@ -29,9 +35,9 @@ function createWindow(): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    window.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -51,6 +57,178 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+
+  // カラーパレットデータを保存
+  ipcMain.handle('save-palette', async (_event, colors) => {
+    try {
+      const configDir = join(app.getPath('userData'), 'config')
+      const paletteFilePath = join(configDir, 'pallet.json')
+
+      // configディレクトリが存在しない場合は作成
+      if (!existsSync(configDir)) {
+        mkdirSync(configDir, { recursive: true })
+      }
+
+      // JSONファイルに保存
+      writeFileSync(paletteFilePath, JSON.stringify(colors, null, 2), 'utf-8')
+    } catch (error) {
+      console.error('Failed to save palette data:', error)
+      throw error
+    }
+  })
+
+  // カラーパレットデータを読み込む
+  ipcMain.handle('load-palette', async () => {
+    try {
+      const configDir = join(app.getPath('userData'), 'config')
+      const paletteFilePath = join(configDir, 'pallet.json')
+
+      // ファイルが存在しない場合は空の配列を返す
+      if (!existsSync(paletteFilePath)) {
+        return []
+      }
+
+      // JSONファイルから読み込む
+      const data = readFileSync(paletteFilePath, 'utf-8')
+      return JSON.parse(data)
+    } catch (error) {
+      console.error('Failed to load palette data:', error)
+      return []
+    }
+  })
+
+  // プロジェクトファイルを保存
+  ipcMain.handle('save-project', async (_event, { filePath, content }) => {
+    try {
+      const dir = filePath.substring(0, filePath.lastIndexOf('/'))
+      if (dir && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true })
+      }
+
+      writeFileSync(filePath, content, 'utf-8')
+      console.log('Project file saved:', filePath)
+    } catch (error) {
+      console.error('Failed to save project file:', error)
+      throw error
+    }
+  })
+
+  // プロジェクトファイルを読み込む
+  ipcMain.handle('load-project', async (_event, filePath) => {
+    try {
+      if (!existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`)
+      }
+
+      const content = readFileSync(filePath, 'utf-8')
+      console.log('Project file loaded:', filePath)
+      return content
+    } catch (error) {
+      console.error('Failed to load project file:', error)
+      throw error
+    }
+  })
+
+  // ファイル保存ダイアログ
+  ipcMain.handle('show-save-dialog', async (_event, { defaultPath }) => {
+    if (!mainWindow) {
+      return { filePath: '', canceled: true }
+    }
+
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultPath || 'project.glw',
+      filters: [
+        { name: 'Boxel Project', extensions: ['glw'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+
+    return result
+  })
+
+  // ファイル開くダイアログ
+  ipcMain.handle('show-open-dialog', async (_event, { defaultPath }) => {
+    if (!mainWindow) {
+      return { filePaths: [], canceled: true }
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: defaultPath || '',
+      filters: [
+        { name: 'Boxel Project', extensions: ['glw'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    })
+
+    return result
+  })
+
+  // GLTFエクスポート用ダイアログ
+  ipcMain.handle('show-export-dialog', async (_event, defaultPath) => {
+    if (!mainWindow) {
+      return { filePath: '', canceled: true }
+    }
+
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultPath || 'model.gltf',
+      filters: [
+        { name: 'glTF', extensions: ['gltf'] },
+        { name: 'glTF Binary', extensions: ['glb'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+
+
+    return result
+  })
+
+  // GLTFファイル選択ダイアログ（インポート用）
+  ipcMain.handle('show-gltf-open-dialog', async () => {
+    if (!mainWindow) {
+      return { filePaths: [], canceled: true }
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      filters: [
+        { name: 'glTF Files', extensions: ['gltf', 'glb'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    })
+
+    return result
+  })
+
+  // GLTFファイルを読み込み（バイナリデータとして返す）
+  ipcMain.handle('load-gltf-file', async (_event, filePath: string) => {
+    try {
+      const buffer = readFileSync(filePath)
+      const base64 = buffer.toString('base64')
+      const extension = filePath.toLowerCase().endsWith('.glb') ? 'glb' : 'gltf'
+      return { data: base64, extension, filePath }
+    } catch (error) {
+      console.error('Failed to load GLTF file:', error)
+      return null
+    }
+  })
+
+  // GLTFファイルを保存
+  ipcMain.handle('save-gltf-file', async (_event, { filePath, content }) => {
+    try {
+      const dir = filePath.substring(0, filePath.lastIndexOf('/'))
+      if (dir && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true })
+      }
+
+      writeFileSync(filePath, content, 'utf-8')
+      console.log('GLTF file saved:', filePath)
+      return true
+    } catch (error) {
+      console.error('Failed to save GLTF file:', error)
+      throw error
+    }
+  })
 
   createWindow()
 

@@ -4,7 +4,9 @@
  * ファイル仕様書に準拠
  */
 
-import { GlwFile, Voxel, PaletteColor, GltfExportOptions } from '../types/index'
+import { GlwFile, Voxel, PaletteColor, GltfExportOptions, Vector3, Face } from '../types/index'
+import { VoxelMesh } from './VoxelMesh'
+import { ActionHistory } from './ActionHistory'
 
 export class FileManager {
   private static readonly CURRENT_VERSION = '1.0.0'
@@ -24,24 +26,71 @@ export class FileManager {
         updatedAt: now,
         gridSizeX,
         gridSizeY,
+        gridSizeZ: gridSizeY,
         maxGridX: 50,
-        maxGridY: 50
+        maxGridY: 50,
+        maxGrid: 50
       },
       mainObject: {
         gridSizeX,
         gridSizeY,
+        gridSizeZ: gridSizeY,
         voxels: [],
         colors: {}
       },
       adjacentObjects: [],
-      camera: {
-        position: { x: 30, y: 30, z: 40 },
-        rotation: { x: 0, y: 0, z: 0, w: 1 },
-        zoom: 1,
-        target: { x: 0, y: 0, z: 0 }
-      },
       colorPalette: this.getDefaultColorPalette(),
       undoRedoHistory: []
+    }
+  }
+
+  /**
+   * プロジェクトデータからGLWファイルを作成
+   */
+  static createGlwFromProject(
+    gridSizeX: number,
+    gridSizeY: number,
+    gridSizeZ: number,
+    voxelMesh: VoxelMesh,
+    colorMap: Map<string, string>,
+    actionHistory: ActionHistory,
+    customPalette: PaletteColor[] = []
+  ): GlwFile {
+    const now = new Date().toISOString()
+    const voxels = voxelMesh.getVoxels()
+    const colors: { [key: string]: string } = {}
+
+    // 色情報を辞書形式に変換
+    colorMap.forEach((color, key) => {
+      colors[key] = color
+    })
+
+    // アンドゥ履歴を取得
+    const undoRedoHistory = actionHistory.getHistory()
+
+    return {
+      version: this.CURRENT_VERSION,
+      metadata: {
+        version: this.CURRENT_VERSION,
+        createdAt: now,
+        updatedAt: now,
+        gridSizeX,
+        gridSizeY,
+        gridSizeZ,
+        maxGridX: 50,
+        maxGridY: 50,
+        maxGrid: 50
+      },
+      mainObject: {
+        gridSizeX,
+        gridSizeY,
+        gridSizeZ,
+        voxels: Array.from(voxels.values()),
+        colors
+      },
+      adjacentObjects: [],
+      colorPalette: customPalette.length > 0 ? customPalette : this.getDefaultColorPalette(),
+      undoRedoHistory
     }
   }
 
@@ -63,6 +112,62 @@ export class FileManager {
   }
 
   /**
+   * GLWファイルをロードして状態を復元
+   */
+  static restoreProjectFromGlw(glwFile: GlwFile, voxelMesh: VoxelMesh, actionHistory: ActionHistory): {
+    gridSize: { x: number; y: number; z: number }
+    palette: PaletteColor[]
+  } | null {
+    try {
+      // グリッドサイズを復元
+      const gridSize = {
+        x: glwFile.metadata.gridSizeX,
+        y: glwFile.metadata.gridSizeY,
+        z: glwFile.metadata.gridSizeZ || glwFile.metadata.gridSizeY
+      }
+
+      // ボクセルデータを復元
+      const voxels = glwFile.mainObject.voxels
+      for (const voxel of voxels) {
+        // VoxelSnapshot形式に変換
+        const snapshot = {
+          position: voxel.position,
+          vertices: voxel.vertices,
+          faces: voxel.faces,
+          colors: {}
+        }
+        voxelMesh.restoreVoxel(voxel.id, snapshot)
+      }
+
+      // 色情報を復元
+      const colorMap = glwFile.mainObject.colors
+      for (const key of Object.keys(colorMap)) {
+        const [voxelId, faceId] = key.split('_')
+        if (voxelId && faceId) {
+          voxelMesh.colorSpecificFace(voxelId, faceId, colorMap[key])
+        }
+      }
+
+      // アンドゥ履歴を復元
+      const history = glwFile.undoRedoHistory || []
+      for (const action of history) {
+        actionHistory.restoreAction(action)
+      }
+
+      // カラーパレットを復元
+      const palette = glwFile.colorPalette || this.getDefaultColorPalette()
+
+      return {
+        gridSize,
+        palette
+      }
+    } catch (error) {
+      console.error('Failed to restore project from GLW:', error)
+      return null
+    }
+  }
+
+  /**
    * GLWファイルを保存
    */
   static async saveGlw(filePath: string, glwFile: GlwFile): Promise<boolean> {
@@ -79,16 +184,13 @@ export class FileManager {
         return false
       }
 
-      // Electronのメインプロセスを通じてファイルを保存
-      if (window.electron) {
-        await window.electron.ipcRenderer.invoke('save-glw-file', {
-          filePath,
-          content: jsonString
-        })
+      // IPC通信を使用してファイルを保存
+      if (window.api) {
+        await window.api.saveProjectFile(filePath, jsonString)
         console.log('GLW file saved:', filePath)
         return true
       } else {
-        // 開発環境やテスト環境ではローカルストレージに保存
+        // フォールバック: localStorage に保存
         localStorage.setItem(`glw_${Date.now()}`, jsonString)
         console.log('GLW file saved to localStorage')
         return true
@@ -106,10 +208,10 @@ export class FileManager {
     try {
       let content: string
 
-      if (window.electron) {
-        content = (await window.electron.ipcRenderer.invoke('load-glw-file', filePath)) as string
+      if (window.api) {
+        content = await window.api.loadProjectFile(filePath)
       } else {
-        // 開発環境ではローカルストレージから読み込み
+        // フォールバック: localStorage から読み込み
         const saved = localStorage.getItem(`glw_${filePath}`)
         if (!saved) {
           console.error('File not found:', filePath)
@@ -217,10 +319,10 @@ export class FileManager {
   /**
    * GLTFファイルをエクスポート
    */
-  static async exportGltf(filePath: string, voxels: Map<string, Voxel>, options: GltfExportOptions = { format: 'gltf' }): Promise<boolean> {
+  static async exportGltf(filePath: string, voxels: Map<string, Voxel>, colorMap: Map<string, string>, options: GltfExportOptions = { format: 'gltf' }): Promise<boolean> {
     try {
-      // 簡易的なGLTF構造を作成
-      const gltfData = this.createGltfStructure(voxels)
+      // 仕様準拠のGLTF構造を作成
+      const gltfData = this.createGltfStructure(voxels, colorMap)
 
       const gltfString = JSON.stringify(gltfData, null, 2)
 
@@ -244,94 +346,348 @@ export class FileManager {
   }
 
   /**
-   * GLTF構造を作成
+   * GLTFデータを作成（公開メソッド）
    */
-  private static createGltfStructure(voxels: Map<string, Voxel>): any {
+  static createGltfData(voxels: Map<string, Voxel>, colorMap: Map<string, string> = new Map()): any {
+    return this.createGltfStructure(voxels, colorMap)
+  }
+
+  /**
+   * 隣接ボクセルが存在するかチェック
+   */
+  private static hasAdjacentVoxel(voxels: Map<string, Voxel>, pos: Vector3, normal: string): boolean {
+    let checkPos: Vector3
+    switch (normal) {
+      case 'x+': checkPos = { x: pos.x + 1, y: pos.y, z: pos.z }; break
+      case 'x-': checkPos = { x: pos.x - 1, y: pos.y, z: pos.z }; break
+      case 'y+': checkPos = { x: pos.x, y: pos.y + 1, z: pos.z }; break
+      case 'y-': checkPos = { x: pos.x, y: pos.y - 1, z: pos.z }; break
+      case 'z+': checkPos = { x: pos.x, y: pos.y, z: pos.z + 1 }; break
+      case 'z-': checkPos = { x: pos.x, y: pos.y, z: pos.z - 1 }; break
+      default: return false
+    }
+    
+    // すべてのボクセルをチェック
+    for (const voxel of voxels.values()) {
+      if (voxel.position.x === checkPos.x && 
+          voxel.position.y === checkPos.y && 
+          voxel.position.z === checkPos.z) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * 法線文字列からVec3に変換
+   */
+  private static normalToVec3(normal: string): [number, number, number] {
+    switch (normal) {
+      case 'x+': return [1, 0, 0]
+      case 'x-': return [-1, 0, 0]
+      case 'y+': return [0, 1, 0]
+      case 'y-': return [0, -1, 0]
+      case 'z+': return [0, 0, 1]
+      case 'z-': return [0, 0, -1]
+      default: return [0, 1, 0]
+    }
+  }
+
+  /**
+   * HEXカラーをRGBに変換（0-1の範囲）
+   */
+  private static hexToRgb(hex: string): [number, number, number] {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    if (result) {
+      return [
+        parseInt(result[1], 16) / 255,
+        parseInt(result[2], 16) / 255,
+        parseInt(result[3], 16) / 255
+      ]
+    }
+    return [0.8, 0.8, 0.8] // デフォルトグレー
+  }
+
+  /**
+   * GLTF構造を作成（仕様準拠版）
+   * - 頂点統合: 同一座標上の重複頂点は自動的に排除
+   * - 面情報: ポリゴンインデックスと法線情報
+   * - 外部頂点のみ: 内部に露出しない頂点は削除される
+   * - マテリアル: フェイスカラー対応
+   */
+  private static createGltfStructure(voxels: Map<string, Voxel>, colorMap: Map<string, string>): any {
+    console.log('[GLTF Export] Starting export, voxels count:', voxels.size)
+    
     const asset = {
       generator: 'Boxel Editor',
       version: '2.0'
     }
 
-    const scene = {
-      nodes: [0]
+    if (voxels.size === 0) {
+      console.log('[GLTF Export] No voxels to export')
+      // 空のGLTF
+      return {
+        asset,
+        scene: 0,
+        scenes: [{ nodes: [] }],
+        nodes: [],
+        meshes: [],
+        buffers: [],
+        bufferViews: [],
+        accessors: []
+      }
     }
 
-    const scenes = [scene]
-    const nodes = [{ mesh: 0 }]
+    // 色ごとにグループ化（マテリアル分け）
+    const colorGroups: Map<string, Array<{ voxel: Voxel; face: Face }>> = new Map()
+    const defaultColor = '#CCCCCC'
+    let totalFaces = 0
+    let skippedFaces = 0
 
-    // メッシュの作成
-    const positions: number[] = []
-    const indices: number[] = []
-
-    let vertexIndex = 0
     voxels.forEach(voxel => {
+      console.log('[GLTF Export] Processing voxel:', voxel.id, 'at', voxel.position, 'faces:', voxel.faces.length)
       voxel.faces.forEach(face => {
-        face.vertexIds.forEach(vertexId => {
-          const vertex = voxel.vertices.find(v => v.id === vertexId)
-          if (vertex) {
-            positions.push(vertex.x, vertex.y, vertex.z)
-            indices.push(vertexIndex++)
-          }
-        })
+        totalFaces++
+        // 内部面をスキップ（隣接ボクセルがある面）
+        if (this.hasAdjacentVoxel(voxels, voxel.position, face.normal)) {
+          skippedFaces++
+          return
+        }
+
+        // 面の色を取得
+        const colorKey = `${voxel.id}_${face.id}`
+        const faceColor = colorMap.get(colorKey) || face.color || defaultColor
+
+        if (!colorGroups.has(faceColor)) {
+          colorGroups.set(faceColor, [])
+        }
+        colorGroups.get(faceColor)!.push({ voxel, face })
       })
     })
 
-    const meshes = [
-      {
-        primitives: [
-          {
-            attributes: {
-              POSITION: 0
-            },
-            indices: 1
-          }
-        ]
-      }
-    ]
+    console.log('[GLTF Export] Total faces:', totalFaces, 'Skipped (internal):', skippedFaces)
+    console.log('[GLTF Export] Color groups:', colorGroups.size)
 
+    // 頂点カラーを使用するため、頂点ごとにデータを生成（重複を許容）
+    const allPositions: number[] = []
+    const allNormals: number[] = []
+    const allColors: number[] = []  // 頂点カラー（RGB、各0-1）
+    const allIndices: number[] = []
+    
+    let vertexIndex = 0
+
+    colorGroups.forEach((faces, color) => {
+      const rgb = this.hexToRgb(color)
+      
+      faces.forEach(({ voxel, face }) => {
+        const normal = this.normalToVec3(face.normal)
+        
+        // 面の4頂点を取得
+        const faceVertices: Array<{ x: number; y: number; z: number }> = []
+        face.vertexIds.forEach(vertexId => {
+          const vertex = voxel.vertices.find(v => v.id === vertexId)
+          if (vertex) {
+            faceVertices.push({ x: vertex.x, y: vertex.y, z: vertex.z })
+          }
+        })
+
+        if (faceVertices.length < 3) return
+
+        // 各頂点を追加（頂点カラー付き）
+        const startIndex = vertexIndex
+        faceVertices.forEach(v => {
+          allPositions.push(v.x, v.y, v.z)
+          allNormals.push(normal[0], normal[1], normal[2])
+          allColors.push(rgb[0], rgb[1], rgb[2])  // 面の色を頂点カラーとして設定
+          vertexIndex++
+        })
+
+        // 三角形化（quad -> 2 triangles）
+        // 法線の方向によって頂点順序を変える
+        // プラス方向（x+, y+, z+）は反時計回り、マイナス方向（x-, y-, z-）は時計回り
+        const isNegativeNormal = face.normal.endsWith('-')
+        
+        if (faceVertices.length >= 3) {
+          if (isNegativeNormal) {
+            allIndices.push(startIndex, startIndex + 1, startIndex + 2)
+          } else {
+            allIndices.push(startIndex, startIndex + 2, startIndex + 1)
+          }
+        }
+        if (faceVertices.length >= 4) {
+          if (isNegativeNormal) {
+            allIndices.push(startIndex, startIndex + 2, startIndex + 3)
+          } else {
+            allIndices.push(startIndex, startIndex + 3, startIndex + 2)
+          }
+        }
+      })
+    })
+
+    console.log('[GLTF Export] Total vertices:', allPositions.length / 3, 'Total indices:', allIndices.length)
+
+    if (allPositions.length === 0) {
+      console.log('[GLTF Export] No positions generated, returning empty GLTF')
+      return {
+        asset,
+        scene: 0,
+        scenes: [{ nodes: [] }],
+        nodes: [],
+        meshes: [],
+        materials: [],
+        buffers: [],
+        bufferViews: [],
+        accessors: []
+      }
+    }
+
+    // バイナリデータをFloat32Array/Uint32Arrayに変換
+    const positionData = new Float32Array(allPositions)
+    const normalData = new Float32Array(allNormals)
+    const colorData = new Float32Array(allColors)
+    const indexData = new Uint32Array(allIndices)
+
+    const positionBytes = new Uint8Array(positionData.buffer)
+    const normalBytes = new Uint8Array(normalData.buffer)
+    const colorBytes = new Uint8Array(colorData.buffer)
+    const indexBytes = new Uint8Array(indexData.buffer)
+
+    // すべてのデータを結合
+    const totalLength = positionBytes.length + normalBytes.length + colorBytes.length + indexBytes.length
+    const combinedBuffer = new Uint8Array(totalLength)
+    let offset = 0
+    combinedBuffer.set(positionBytes, offset); offset += positionBytes.length
+    combinedBuffer.set(normalBytes, offset); offset += normalBytes.length
+    combinedBuffer.set(colorBytes, offset); offset += colorBytes.length
+    combinedBuffer.set(indexBytes, offset)
+
+    // Base64エンコード
+    const base64Data = this.uint8ArrayToBase64(combinedBuffer)
+
+    // バウンディングボックスを計算
+    let minX = Infinity, minY = Infinity, minZ = Infinity
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+    for (let i = 0; i < allPositions.length; i += 3) {
+      minX = Math.min(minX, allPositions[i])
+      maxX = Math.max(maxX, allPositions[i])
+      minY = Math.min(minY, allPositions[i + 1])
+      maxY = Math.max(maxY, allPositions[i + 1])
+      minZ = Math.min(minZ, allPositions[i + 2])
+      maxZ = Math.max(maxZ, allPositions[i + 2])
+    }
+
+    // BufferViews
     const bufferViews = [
       {
         buffer: 0,
-        byteLength: positions.length * 4,
-        target: 34962
+        byteOffset: 0,
+        byteLength: positionBytes.length,
+        target: 34962 // ARRAY_BUFFER
       },
       {
         buffer: 0,
-        byteLength: indices.length * 4,
-        byteOffset: positions.length * 4,
-        target: 34963
+        byteOffset: positionBytes.length,
+        byteLength: normalBytes.length,
+        target: 34962 // ARRAY_BUFFER
+      },
+      {
+        buffer: 0,
+        byteOffset: positionBytes.length + normalBytes.length,
+        byteLength: colorBytes.length,
+        target: 34962 // ARRAY_BUFFER
+      },
+      {
+        buffer: 0,
+        byteOffset: positionBytes.length + normalBytes.length + colorBytes.length,
+        byteLength: indexBytes.length,
+        target: 34963 // ELEMENT_ARRAY_BUFFER
       }
     ]
 
+    const vertexCount = allPositions.length / 3
+
+    // Accessors
     const accessors = [
       {
         bufferView: 0,
         componentType: 5126, // FLOAT
-        count: positions.length / 3,
-        type: 'VEC3'
+        count: vertexCount,
+        type: 'VEC3',
+        min: [minX, minY, minZ],
+        max: [maxX, maxY, maxZ]
       },
       {
         bufferView: 1,
+        componentType: 5126, // FLOAT
+        count: vertexCount,
+        type: 'VEC3'
+      },
+      {
+        bufferView: 2,
+        componentType: 5126, // FLOAT
+        count: vertexCount,
+        type: 'VEC3'
+      },
+      {
+        bufferView: 3,
         componentType: 5125, // UNSIGNED_INT
-        count: indices.length,
+        count: allIndices.length,
         type: 'SCALAR'
       }
     ]
 
-    const buffer = {
-      byteLength: positions.length * 4 + indices.length * 4
-    }
+    // 単一メッシュ（頂点カラー付き）
+    const meshes = [{
+      primitives: [{
+        attributes: {
+          POSITION: 0,
+          NORMAL: 1,
+          COLOR_0: 2
+        },
+        indices: 3,
+        material: 0,
+        mode: 4 // TRIANGLES
+      }]
+    }]
+
+    // マテリアル（頂点カラーを使用するため、baseColorFactorは白）
+    const materials = [{
+      pbrMetallicRoughness: {
+        baseColorFactor: [1.0, 1.0, 1.0, 1.0],
+        metallicFactor: 0.0,
+        roughnessFactor: 0.8
+      },
+      name: 'VertexColorMaterial'
+    }]
+
+    console.log('[GLTF Export] Export completed successfully')
 
     return {
       asset,
       scene: 0,
-      scenes,
-      nodes,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0, name: 'VoxelMesh' }],
       meshes,
-      buffers: [buffer],
+      materials,
+      buffers: [{
+        uri: `data:application/octet-stream;base64,${base64Data}`,
+        byteLength: totalLength
+      }],
       bufferViews,
       accessors
     }
+  }
+
+  /**
+   * Uint8ArrayをBase64文字列に変換
+   */
+  private static uint8ArrayToBase64(bytes: Uint8Array): string {
+    let binary = ''
+    const len = bytes.byteLength
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i])
+    }
+    return btoa(binary)
   }
 
   /**

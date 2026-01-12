@@ -2,6 +2,15 @@
  * VoxelMesh V2
  * シンプル実装版：ボクセルメッシュの管理と3Dメッシュ生成
  * 仕様書準拠
+ *
+ * シェーダーシステム:
+ * - グリッド線シェーダー: バリセントリック座標を使用したエッジ検出でGPU処理
+ * - 選択ハイライトシェーダー: 選択時に色を暗くして視覚的フィードバック
+ *
+ * フロー:
+ * 1. createGridMaterial() でグリッド線シェーダーマテリアルを生成
+ * 2. createSelectionMaterial() で選択用シェーダーマテリアルを生成
+ * 3. updateMeshColor() で通常/選択状態の切り替え
  */
 
 import * as THREE from 'three'
@@ -12,9 +21,30 @@ export class VoxelMesh {
   private colorMap: Map<string, string> = new Map()
   private vertexIdCounter: number = 0
   private voxelIdCounter: number = 0
+  private showGridLines: boolean = true
+  private minX: number = Number.NEGATIVE_INFINITY
+  private maxX: number = Number.POSITIVE_INFINITY
+  private minY: number = Number.NEGATIVE_INFINITY
+  private maxY: number = Number.POSITIVE_INFINITY
+  private minZ: number = Number.NEGATIVE_INFINITY
+  private maxZ: number = Number.POSITIVE_INFINITY
 
   constructor(_gridSizeX: number, _gridSizeY: number) {
     // 初期状態では空のグリッド（仕様書準拠）
+  }
+
+  /**
+   * グリッド範囲を設定（絶対座標）
+   * 底面の中心を(0,0,0)に配置する場合の範囲指定用
+   */
+  setGridBounds(minX: number, maxX: number, minY: number, maxY: number, minZ: number = 0, maxZ: number = Number.POSITIVE_INFINITY): void {
+    this.minX = minX
+    this.maxX = maxX
+    this.minY = minY
+    this.maxY = maxY
+    this.minZ = minZ
+    this.maxZ = maxZ
+    console.log(`[setGridBounds] Grid bounds set: X[${minX}, ${maxX}), Y[${minY}, ${maxY}), Z[${minZ}, ${maxZ})`)
   }
 
   /**
@@ -100,6 +130,14 @@ export class VoxelMesh {
    * ボクセルを追加
    */
   addVoxel(position: Vector3): Voxel | null {
+    // グリッド範囲外かチェック（絶対座標で判定）
+    if (position.x < this.minX || position.x >= this.maxX ||
+        position.y < this.minY || position.y >= this.maxY ||
+        position.z < this.minZ || position.z >= this.maxZ) {
+      console.warn('Voxel position out of bounds:', position, 'Grid bounds: X[' + this.minX + ', ' + this.maxX + '), Y[' + this.minY + ', ' + this.maxY + '), Z[' + this.minZ + ', ' + this.maxZ + ')')
+      return null
+    }
+
     // 既存のボクセルと重複しないかチェック
     for (const voxel of this.voxels.values()) {
       if (
@@ -308,10 +346,28 @@ export class VoxelMesh {
   }
 
   /**
+   * すべての面カラー情報を取得
+   */
+  getColorMap(): Map<string, string> {
+    return this.colorMap
+  }
+
+  /**
    * ボクセル総数
    */
   getVoxelCount(): number {
     return this.voxels.size
+  }
+
+  /**
+   * すべてのボクセルをクリア
+   */
+  clear(): void {
+    this.voxels.clear()
+    this.colorMap.clear()
+    this.vertexIdCounter = 0
+    this.voxelIdCounter = 0
+    console.log('[VoxelMesh] All voxels cleared')
   }
 
   /**
@@ -328,7 +384,10 @@ export class VoxelMesh {
   /**
    * 生成済みのメッシュの色を更新（再生成なし）
    */
-  updateMeshColor(meshGroup: THREE.Group, voxelId: string, faceId: string, color: string): void {
+  /**
+   * メッシュの色を更新（選択状態を含む）
+   */
+  updateMeshColor(meshGroup: THREE.Group, voxelId: string, faceId: string, color: string, isSelected: boolean = false): void {
     const rgbColor = this.hexToRgb(color)
     const colorObj = new THREE.Color(rgbColor.r / 255, rgbColor.g / 255, rgbColor.b / 255)
 
@@ -337,9 +396,25 @@ export class VoxelMesh {
       if (group instanceof THREE.Mesh) {
         const mesh = group as any
         if (mesh.userData?.voxelId === voxelId && mesh.userData?.faceId === faceId) {
-          if (mesh.material instanceof THREE.MeshBasicMaterial || mesh.material instanceof THREE.MeshPhongMaterial) {
-            mesh.material.color.copy(colorObj)
-            console.log(`[updateMeshColor] Updated color for ${voxelId}/${faceId}`)
+          // 選択状態の場合はシェーダーマテリアルを使用
+          if (isSelected) {
+            const newMaterial = this.createSelectionMaterial(rgbColor.r, rgbColor.g, rgbColor.b)
+            ;(newMaterial as any).userData = { isSelection: true }
+            mesh.material = newMaterial
+            console.log(`[updateMeshColor] Applied selection material for ${voxelId}/${faceId}`)
+          } else {
+            // 通常の色更新
+            if (mesh.material instanceof THREE.MeshBasicMaterial || mesh.material instanceof THREE.MeshPhongMaterial) {
+              mesh.material.color.copy(colorObj)
+              console.log(`[updateMeshColor] Updated color for ${voxelId}/${faceId}`)
+            }
+            // ShaderMaterial の場合
+            else if (mesh.material instanceof THREE.ShaderMaterial) {
+              if (mesh.material.uniforms.uColor) {
+                mesh.material.uniforms.uColor.value.copy(colorObj)
+                console.log(`[updateMeshColor] Updated shader color for ${voxelId}/${faceId}`)
+              }
+            }
           }
         }
         return
@@ -357,24 +432,16 @@ export class VoxelMesh {
   }
 
   /**
-   * Three.jsメッシュに変換（シンプル版）
+   * Three.jsメッシュに変換
    */
   toThreeMesh(): THREE.Group {
     const group = new THREE.Group()
     console.log(`[toThreeMesh] Starting with ${this.voxels.size} voxels`)
 
     let meshCount = 0
-    let firstVoxel = true
 
-    // 各ボクセルを個別にメッシュとして生成
+    // 各ボクセルを処理
     this.voxels.forEach((voxel) => {
-      // デバッグ：最初のボクセルのジオメトリをログ出力
-      if (firstVoxel) {
-        console.log(`[toThreeMesh] Voxel ${voxel.id} at position:`, voxel.position)
-        console.log(`[toThreeMesh] Voxel ${voxel.id} vertices:`, voxel.vertices.map(v => ({ id: v.id, x: v.x, y: v.y, z: v.z })))
-        firstVoxel = false
-      }
-
       // 各面をメッシュ化
       voxel.faces.forEach((face) => {
         // 面の頂点IDから実際の頂点オブジェクトを取得
@@ -387,29 +454,26 @@ export class VoxelMesh {
           return new THREE.Vector3(vertex.x, vertex.y, vertex.z)
         })
 
-        if (faceVertices.length < 3) {
-          console.warn(`[toThreeMesh] Face has less than 3 vertices: ${face.id}`)
-          return
-        }
+        if (faceVertices.length < 3) return
 
         // 4つの頂点を2つの三角形に分割
-        // 四角形: v0, v1, v2, v3 => 三角形: (v0,v1,v2) + (v0,v2,v3)
         const positions: number[] = []
         const indices: number[] = []
+        const barycentrics: number[] = []
 
-        // 4つの頂点をBufferGeometryに追加
-        faceVertices.forEach((v) => {
+        faceVertices.forEach((v, index) => {
           positions.push(v.x, v.y, v.z)
+          // バリセントリック座標：各頂点で異なる値を設定
+          const bary = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 0, 0]][index]
+          barycentrics.push(bary[0], bary[1], bary[2])
         })
 
-        // 法線を計算（最初の3つの頂点から）
+        // 法線を計算
         const v1 = faceVertices[1].clone().sub(faceVertices[0])
         const v2 = faceVertices[2].clone().sub(faceVertices[0])
         const normal = v1.cross(v2).normalize()
 
-        // インデックスで三角形を定義
-        indices.push(0, 1, 2) // 三角形1
-        indices.push(0, 2, 3) // 三角形2
+        indices.push(0, 1, 2, 0, 2, 3)
 
         // ジオメトリを作成
         const geometry = new THREE.BufferGeometry()
@@ -422,34 +486,24 @@ export class VoxelMesh {
           normals.push(normal.x, normal.y, normal.z)
         }
         geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3))
+        
+        // バリセントリック座標を設定
+        geometry.setAttribute('barycentric', new THREE.BufferAttribute(new Float32Array(barycentrics), 3))
 
-        // マテリアルを作成
+        // マテリアルを作成（グリッド線をシェーダーで処理）
         const rgbColor = this.hexToRgb(face.color || '#808080')
-        const material = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(rgbColor.r / 255, rgbColor.g / 255, rgbColor.b / 255),
-          side: THREE.DoubleSide,
-          wireframe: false
-        })
+        const material = this.createGridMaterial(
+          rgbColor.r / 255,
+          rgbColor.g / 255,
+          rgbColor.b / 255,
+          this.showGridLines
+        )
 
         // メッシュを作成
         const mesh = new THREE.Mesh(geometry, material)
         mesh.userData.voxelId = voxel.id
         mesh.userData.faceId = face.id
-        
-        // 新しく追加されたボクセルの面について詳細ログ
-        if (voxel.id.includes('_4') || voxel.id.includes('_5') || voxel.id.includes('_6') || voxel.id.includes('_7') || voxel.id.includes('_8')) {
-          console.log(`[toThreeMesh] Created mesh for ${voxel.id} ${face.id}:`, {
-            voxelId: mesh.userData.voxelId,
-            faceId: mesh.userData.faceId,
-            normal: normal,
-            positionCount: positions.length,
-            v0: faceVertices[0],
-            v1: faceVertices[1],
-            v2: faceVertices[2],
-            v3: faceVertices[3]
-          })
-        }
-        
+
         group.add(mesh)
         meshCount++
       })
@@ -457,6 +511,101 @@ export class VoxelMesh {
 
     console.log(`[toThreeMesh] Created ${meshCount} face meshes in group`)
     return group
+  }
+
+  /**
+   * グリッド線をシェーダーで処理するマテリアルを作成
+   */
+  private createGridMaterial(r: number, g: number, b: number, showGrid: boolean): THREE.Material {
+    if (!showGrid) {
+      // グリッド線表示がOFFの場合、単純なMeshBasicMaterialを使用
+      return new THREE.MeshBasicMaterial({
+        color: new THREE.Color(r, g, b),
+        side: THREE.DoubleSide,
+        wireframe: false
+      })
+    }
+
+    // グリッド線をシェーダーで処理
+    return new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([
+        THREE.UniformsLib.common,
+        {
+          uColor: { value: new THREE.Color(r, g, b) }
+        }
+      ]),
+      vertexShader: `
+        attribute vec3 barycentric;
+        varying vec3 vBarycentric;
+        
+        void main() {
+          vBarycentric = barycentric;
+          gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vBarycentric;
+        uniform vec3 uColor;
+        
+        void main() {
+          // バリセントリック座標を使用して、エッジの距離を計算
+          float d = min(vBarycentric.x, min(vBarycentric.y, vBarycentric.z));
+          
+          // エッジの幅を制御（fwidth で自動的にスクリーン空間に合わせる）
+          float edgeWidth = fwidth(d) * 1.5;
+          float edge = smoothstep(edgeWidth, 0.0, d);
+          
+          // フェイスカラーとグリッド線を混合
+          vec3 gridColor = vec3(0.0);
+          vec3 finalColor = mix(uColor, gridColor, edge);
+          
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `,
+      side: THREE.DoubleSide
+    })
+  }
+
+  /**
+   * 選択ハイライトシェーダーマテリアルを作成
+   */
+  private createSelectionMaterial(r: number, g: number, b: number): THREE.Material {
+    return new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([
+        THREE.UniformsLib.common,
+        {
+          uColor: { value: new THREE.Color(r, g, b) }
+        }
+      ]),
+      vertexShader: `
+        attribute vec3 barycentric;
+        varying vec3 vBarycentric;
+        
+        void main() {
+          vBarycentric = barycentric;
+          gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vBarycentric;
+        uniform vec3 uColor;
+        
+        void main() {
+          // グリッド線の処理
+          float d = min(vBarycentric.x, min(vBarycentric.y, vBarycentric.z));
+          float edgeWidth = fwidth(d) * 1.5;
+          float edge = smoothstep(edgeWidth, 0.0, d);
+          
+          // 選択色を暗くして表示（濃い色）
+          vec3 selectionColor = uColor * 0.7;
+          vec3 gridColor = vec3(0.0);
+          vec3 finalColor = mix(selectionColor, gridColor, edge);
+          
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `,
+      side: THREE.DoubleSide
+    })
   }
 
   /**

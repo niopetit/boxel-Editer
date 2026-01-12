@@ -1,34 +1,41 @@
-// Voxel Mesh Fragment Shader
-// ボクセルメッシュ表示用のフラグメントシェーダー
+#version 300 es
+precision highp float;
 
-varying vec3 vPosition;
-varying vec3 vNormal;
-varying vec3 vColor;
+// 入力
+in vec3 vPosition;
+in vec3 vNormal;
+in vec3 vColor;
 
+// uniform
 uniform vec3 uLightPosition;
 uniform vec3 uLightColor;
 uniform float uAmbientIntensity;
 uniform vec3 uCameraPosition;
 
+// 出力
+out vec4 outColor;
+
 void main() {
   // ライト方向
   vec3 lightDir = normalize(uLightPosition - vPosition);
   
-  // 視線方向
+  // ビュー方向
   vec3 viewDir = normalize(uCameraPosition - vPosition);
   
-  // ディフューズ
-  float diff = max(dot(vNormal, lightDir), 0.0);
+  // アンビエント光
+  vec3 ambient = vColor * uAmbientIntensity;
   
-  // スペキュラー
+  // ディフューズ光
+  float diffuse = max(dot(vNormal, lightDir), 0.0);
+  vec3 diffuseColor = vColor * diffuse * uLightColor;
+  
+  // スペキュラー光（ボクセルは通常スペキュラーは弱い）
   vec3 reflectDir = reflect(-lightDir, vNormal);
-  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
-  
-  // アンビエント
-  vec3 ambient = uLightColor * uAmbientIntensity;
+  float specular = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
+  vec3 specularColor = uLightColor * specular * 0.3;
   
   // 最終色
-  vec3 finalColor = ambient + (diff + spec) * uLightColor * vColor;
+  vec3 finalColor = ambient + diffuseColor + specularColor;
   
-  gl_FragColor = vec4(finalColor, 1.0);
+  outColor = vec4(finalColor, 1.0);
 }

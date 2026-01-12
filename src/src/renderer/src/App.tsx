@@ -1,6 +1,7 @@
 import './App.css'
 import { useState } from 'react'
 import BoxelEditor from './components/BoxelEditor'
+import ColorPaletteSidebar from './components/ColorPaletteSidebar'
 
 function App(): JSX.Element {
   const [gridSize, setGridSize] = useState({ x: 10, y: 10, z: 10 })
@@ -8,6 +9,7 @@ function App(): JSX.Element {
   const [inputX, setInputX] = useState('10')
   const [inputY, setInputY] = useState('10')
   const [inputZ, setInputZ] = useState('10')
+  const [selectedColor, setSelectedColor] = useState('#FF0000')
 
   const handleStart = (): void => {
     const x = Math.max(1, Math.min(50, parseInt(inputX) || 10))
@@ -68,8 +70,11 @@ function App(): JSX.Element {
   }
 
   return (
-    <div className="app">
-      <BoxelEditor gridSize={gridSize} />
+    <div className="app-container">
+      <ColorPaletteSidebar selectedColor={selectedColor} onColorSelect={setSelectedColor} />
+      <div className="app">
+        <BoxelEditor gridSize={gridSize} selectedColor={selectedColor} />
+      </div>
     </div>
   )
 }

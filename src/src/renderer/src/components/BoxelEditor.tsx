@@ -5,20 +5,24 @@ import { CameraController } from '../lib/CameraController'
 import { ActionHistory } from '../lib/ActionHistory'
 import { ColorSystem } from '../lib/ColorSystem'
 import { FileManager } from '../lib/FileManager'
+import { AdjacentObjectManager } from '../lib/AdjacentObjectManager'
+import { AdjacentObject } from '../types/index'
+import AdjacentObjectPanel from './AdjacentObjectPanel'
 import './styles/BoxelEditor.css'
 
 interface BoxelEditorProps {
   gridSize: { x: number; y: number; z: number }
+  selectedColor: string
 }
 
-function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
+function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [vertexCount, setVertexCount] = useState(0)
   const [voxelCount, setVoxelCount] = useState(0)
-  const [selectedColor, setSelectedColor] = useState('#FF0000')
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [selectedVoxelId, setSelectedVoxelId] = useState<string | null>(null)
+  const [adjacentObjects, setAdjacentObjects] = useState<AdjacentObject[]>([])
 
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -28,12 +32,71 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
   const actionHistoryRef = useRef<ActionHistory | null>(null)
   const colorSystemRef = useRef<ColorSystem | null>(null)
   const meshGroupRef = useRef<THREE.Group | null>(null)
+  const adjacentMeshGroupRef = useRef<THREE.Group | null>(null)
+  const adjacentObjectManagerRef = useRef<AdjacentObjectManager | null>(null)
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster())
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2())
   const animationIdRef = useRef<number>(0)
   const updateVoxelMeshRef = useRef<(() => void) | null>(null)
+  const updateAdjacentMeshesRef = useRef<(() => void) | null>(null)
   const previouslySelectedMeshRef = useRef<THREE.Mesh | null>(null)
   const previouslyHoveredMeshRef = useRef<THREE.Mesh | null>(null)
+
+  // === アクション復元ヘルパー関数（useEffect外で定義） ===
+  const applyAction = (action: {
+    type: string
+    data: Record<string, any>
+  }): void => {
+    if (!voxelMeshRef.current) return
+
+    switch (action.type) {
+      case 'addVoxel':
+        if (action.data.voxelData) {
+          voxelMeshRef.current.restoreVoxel(action.data.voxelId, action.data.voxelData)
+        }
+        break
+      case 'deleteVoxel':
+        voxelMeshRef.current.deleteVoxel(action.data.voxelId)
+        break
+      case 'colorFace':
+        voxelMeshRef.current.colorSpecificFace(
+          action.data.voxelId,
+          action.data.faceId,
+          action.data.newColor
+        )
+        break
+    }
+  }
+
+  const applyActionReverse = (action: {
+    type: string
+    data: Record<string, any>
+  }): void => {
+    if (!voxelMeshRef.current) return
+
+    switch (action.type) {
+      case 'addVoxel':
+        voxelMeshRef.current.deleteVoxel(action.data.voxelId)
+        break
+      case 'deleteVoxel':
+        if (action.data.voxelData) {
+          voxelMeshRef.current.restoreVoxel(action.data.voxelId, action.data.voxelData)
+        }
+        break
+      case 'colorFace':
+        voxelMeshRef.current.colorSpecificFace(
+          action.data.voxelId,
+          action.data.faceId,
+          action.data.previousColor
+        )
+        break
+    }
+  }
+
+  const updateUndoRedoButtons = (): void => {
+    setCanUndo(actionHistoryRef.current?.canUndo() ?? false)
+    setCanRedo(actionHistoryRef.current?.canRedo() ?? false)
+  }
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -158,6 +221,38 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     }
     updateVoxelMeshRef.current = updateVoxelMesh
 
+    // === 隣接オブジェクトマネージャー初期化 ===
+    const adjacentObjectManager = new AdjacentObjectManager()
+    adjacentObjectManagerRef.current = adjacentObjectManager
+
+    // === 隣接オブジェクト用メッシュグループ ===
+    const adjacentMeshGroup = new THREE.Group()
+    adjacentMeshGroup.name = 'adjacentMeshGroup'
+    scene.add(adjacentMeshGroup)
+    adjacentMeshGroupRef.current = adjacentMeshGroup
+
+    // === 隣接オブジェクトのメッシュを更新 ===
+    const updateAdjacentMeshes = (): void => {
+      if (!adjacentMeshGroupRef.current || !adjacentObjectManagerRef.current) return
+
+      // 既存のメッシュをクリア
+      adjacentMeshGroupRef.current.clear()
+
+      const adjacentObjs = adjacentObjectManagerRef.current.getAllAdjacentObjects()
+
+      adjacentObjs.forEach((adjObj) => {
+        if (!adjObj.visible || !adjObj.mesh) return
+
+        // GLTFから読み込んだメッシュをそのまま追加（パフォーマンス最適化済み）
+        adjObj.mesh.position.set(adjObj.position.x, adjObj.position.y, adjObj.position.z)
+        adjObj.mesh.userData.adjacentObjectId = adjObj.id
+        adjacentMeshGroupRef.current?.add(adjObj.mesh)
+      })
+
+      console.log(`[updateAdjacentMeshes] Updated ${adjacentObjs.length} adjacent objects`)
+    }
+    updateAdjacentMeshesRef.current = updateAdjacentMeshes
+
     // === カメラコントローラー初期化 ===
     const cameraController = new CameraController(camera)
     cameraControllerRef.current = cameraController
@@ -197,6 +292,18 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
 
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
 
+      // メッシュの色を設定するヘルパー関数
+      const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
+        if (mesh.material instanceof THREE.MeshBasicMaterial) {
+          mesh.material.color.setHex(colorHex)
+        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+          const r = ((colorHex >> 16) & 255) / 255
+          const g = ((colorHex >> 8) & 255) / 255
+          const b = (colorHex & 255) / 255
+          mesh.material.uniforms.uColor.value.setRGB(r, g, b)
+        }
+      }
+
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
@@ -205,23 +312,26 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
           // 選択状態でなければハイライト解除
           if (previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
             const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
-            if (baseColor && previouslyHoveredMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
-              previouslyHoveredMeshRef.current.material.color.setHex(baseColor)
+            if (baseColor) {
+              setMeshColor(previouslyHoveredMeshRef.current, baseColor)
             }
           }
         }
 
         // 新しいホバー対象が選択されていなければホバーハイライトを適用
         if (mesh !== previouslySelectedMeshRef.current) {
-          if (mesh.material instanceof THREE.MeshBasicMaterial) {
-            // 元の色を保存（baseColorはメッシュ更新時に設定される）
-            if (!mesh.userData.baseColor) {
+          // 元の色を保存
+          if (!mesh.userData.baseColor) {
+            if (mesh.material instanceof THREE.MeshBasicMaterial) {
               mesh.userData.baseColor = mesh.material.color.getHex()
+            } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+              const c = mesh.material.uniforms.uColor.value
+              mesh.userData.baseColor = (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255)
             }
-            // 青色でホバーハイライト
-            mesh.material.color.setHex(0x0099FF)
-            previouslyHoveredMeshRef.current = mesh
           }
+          // 青色でホバーハイライト
+          setMeshColor(mesh, 0x0099FF)
+          previouslyHoveredMeshRef.current = mesh
         } else {
           // 選択されているメッシュをホバーした場合、ホバー参照をクリア（選択色を維持）
           previouslyHoveredMeshRef.current = null
@@ -230,8 +340,8 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
         // ホバー対象がなくなった場合、ホバーハイライトを解除
         if (previouslyHoveredMeshRef.current && previouslyHoveredMeshRef.current !== previouslySelectedMeshRef.current) {
           const baseColor = previouslyHoveredMeshRef.current.userData.baseColor
-          if (baseColor && previouslyHoveredMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
-            previouslyHoveredMeshRef.current.material.color.setHex(baseColor)
+          if (baseColor) {
+            setMeshColor(previouslyHoveredMeshRef.current, baseColor)
           }
         }
         previouslyHoveredMeshRef.current = null
@@ -267,6 +377,29 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
 
       console.log('[handleMouseClick] Intersects:', intersects.length)
 
+      // メッシュの色を設定するヘルパー関数
+      const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
+        if (mesh.material instanceof THREE.MeshBasicMaterial) {
+          mesh.material.color.setHex(colorHex)
+        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+          const r = ((colorHex >> 16) & 255) / 255
+          const g = ((colorHex >> 8) & 255) / 255
+          const b = (colorHex & 255) / 255
+          mesh.material.uniforms.uColor.value.setRGB(r, g, b)
+        }
+      }
+
+      // メッシュの色を取得するヘルパー関数
+      const getMeshColor = (mesh: THREE.Mesh): number | null => {
+        if (mesh.material instanceof THREE.MeshBasicMaterial) {
+          return mesh.material.color.getHex()
+        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+          const c = mesh.material.uniforms.uColor.value
+          return (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255)
+        }
+        return null
+      }
+
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
@@ -276,8 +409,8 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
         // 前回選択されたメッシュのハイライトを解除
         if (previouslySelectedMeshRef.current && previouslySelectedMeshRef.current !== mesh) {
           const baseColor = previouslySelectedMeshRef.current.userData.baseColor
-          if (baseColor && previouslySelectedMeshRef.current.material instanceof THREE.MeshBasicMaterial) {
-            previouslySelectedMeshRef.current.material.color.setHex(baseColor)
+          if (baseColor) {
+            setMeshColor(previouslySelectedMeshRef.current, baseColor)
           }
           previouslyHoveredMeshRef.current = null
         }
@@ -290,32 +423,27 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
           setSelectedVoxelId(voxelId)
           console.log('✓ Selected voxel:', voxelId, 'face:', faceId)
 
-          // 選択メッシュのハイライトを適用
-          if (mesh.material instanceof THREE.MeshBasicMaterial) {
-            // 元の色を保存（baseColorがなければ現在の色を保存）
-            if (!mesh.userData.baseColor) {
-              mesh.userData.baseColor = mesh.material.color.getHex()
-            }
-            // 黄色でハイライト
-            mesh.material.color.setHex(0xFFFF00)
-            previouslySelectedMeshRef.current = mesh
-            previouslyHoveredMeshRef.current = null
+          // 元の色を保存（baseColorがなければ現在の色を保存）
+          if (!mesh.userData.baseColor) {
+            mesh.userData.baseColor = getMeshColor(mesh)
           }
+          // 黄色でハイライト
+          setMeshColor(mesh, 0xFFFF00)
+          previouslySelectedMeshRef.current = mesh
+          previouslyHoveredMeshRef.current = null
 
           // 選択された面を保存
           if (canvasRef.current) {
             ;(canvasRef.current as any).selectedFaceId = faceId
             ;(canvasRef.current as any).selectedVoxelId = voxelId
           }
-
           // 選択されたボクセルの面の色をパレットに反映
           if (voxelMeshRef.current) {
             const voxel = voxelMeshRef.current.getVoxel(voxelId)
             if (voxel) {
               const face = voxel.faces.find((f) => f.id === faceId)
               if (face && face.color) {
-                console.log('[handleMouseClick] Setting color palette to:', face.color)
-                setSelectedColor(face.color)
+                console.log('[handleMouseClick] Face color:', face.color)
               }
             }
           }
@@ -329,196 +457,8 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     }
 
     // === キーボードイベント ===
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      console.log('[handleKeyDown] Key pressed:', event.key, 'shift:', event.shiftKey, 'ctrl/cmd:', event.ctrlKey || event.metaKey, 'alt:', event.altKey || event.metaKey)
-      
-      // Undo/Redo
-      if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
-        if (event.shiftKey) {
-          const action = actionHistoryRef.current?.redo()
-          if (action) {
-            applyActionReverse(action)
-            console.log('Redo:', action.type)
-          }
-        } else {
-          const action = actionHistoryRef.current?.peekUndo()
-          if (action) {
-            applyActionReverse(action)
-            actionHistoryRef.current?.undo()
-            console.log('Undo:', action.type)
-          }
-        }
-        updateVoxelMeshRef.current?.()
-        updateUndoRedoButtons()
-      }
-
-      // 削除: Alt + Backspace
-      if ((event.altKey || event.metaKey) && event.key === 'Backspace') {
-        event.preventDefault()
-        if (selectedVoxelId && voxelMeshRef.current) {
-          const snapshot = voxelMeshRef.current.deleteVoxel(selectedVoxelId)
-          if (snapshot) {
-            console.log('Voxel deleted:', selectedVoxelId)
-            
-            // アクション履歴に追加
-            actionHistoryRef.current?.pushAction(
-              'deleteVoxel',
-              {
-                voxelId: selectedVoxelId,
-                position: snapshot.position,
-                voxelData: snapshot
-              },
-              `ボクセルを削除: ${selectedVoxelId}`,
-              'main'
-            )
-            
-            updateVoxelMeshRef.current?.()
-            setSelectedVoxelId(null)
-            updateUndoRedoButtons()
-          }
-        }
-      }
-
-      // 追加: Shift + キー 'n' (New)
-      if (event.shiftKey && (event.key === 'n' || event.key === 'N')) {
-        event.preventDefault()
-        console.log('[handleKeyDown] ✓ Shift+N detected - attempting to add voxel')
-        
-        // クリック時に保存された voxelId を使う（state より信頼性がある）
-        const selectedVoxelId = (canvasRef.current as any)?.selectedVoxelId
-        console.log('[handleKeyDown] selectedVoxelId (from canvas):', selectedVoxelId)
-        
-        if (selectedVoxelId && voxelMeshRef.current) {
-          const voxel = voxelMeshRef.current.getVoxels().get(selectedVoxelId)
-          console.log('[handleKeyDown] voxel found:', voxel?.id, 'faces count:', voxel?.faces.length)
-          
-          if (voxel && voxel.faces.length > 0) {
-            // 選択された面の ID を取得
-            const selectedFaceId = (canvasRef.current as any)?.selectedFaceId
-            console.log('[handleKeyDown] selectedFaceId:', selectedFaceId)
-            
-            const targetFaceId = selectedFaceId || voxel.faces[0].id
-            const targetFace = voxel.faces.find((f) => f.id === targetFaceId)
-            
-            console.log('[handleKeyDown] targetFace:', targetFace?.id, 'normal:', targetFace?.normal)
-            
-            if (targetFace) {
-              // voxelId と faceId を直接指定してボクセルを追加
-              const newVoxel = voxelMeshRef.current.addVoxelAtFaceId(selectedVoxelId, targetFace.id)
-              console.log('[handleKeyDown] addVoxelAtFaceId result:', newVoxel?.id || 'null')
-              
-              if (newVoxel) {
-                console.log('✓ New voxel added:', newVoxel.id, 'at face:', targetFace.id)
-                
-                // アクション履歴に追加
-                actionHistoryRef.current?.pushAction(
-                  'addVoxel',
-                  {
-                    voxelId: newVoxel.id,
-                    position: newVoxel.position,
-                    adjacentDirection: targetFace.normal
-                  },
-                  `ボクセルを追加: ${newVoxel.id}`,
-                  'main'
-                )
-                
-                updateVoxelMeshRef.current?.()
-                // 新しく追加されたボクセルを選択状態にする
-                ;(canvasRef.current as any).selectedVoxelId = newVoxel.id
-                setSelectedVoxelId(newVoxel.id)
-                updateUndoRedoButtons()
-              } else {
-                console.log('[handleKeyDown] ✗ Failed to add voxel - position already exists')
-              }
-            }
-          }
-        } else {
-          console.log('[handleKeyDown] ✗ No voxel selected or voxelMesh not initialized')
-        }
-      }
-
-      // 着色: Alt + 'c'
-      if ((event.altKey || event.metaKey) && event.key === 'c') {
-        event.preventDefault()
-        if (selectedVoxelId && voxelMeshRef.current && meshGroupRef.current) {
-          const voxel = voxelMeshRef.current.getVoxels().get(selectedVoxelId)
-          if (voxel) {
-            // 選択された面を取得（レイキャスティングから）
-            const selectedFaceId = (canvasRef.current as any)?.selectedFaceId
-            const targetFace = selectedFaceId
-              ? voxel.faces.find(f => f.id === selectedFaceId)
-              : voxel.faces[0]
-
-            if (targetFace) {
-              const previousColor = targetFace.color || '#808080'
-              voxelMeshRef.current.colorSpecificFace(selectedVoxelId, targetFace.id, selectedColor)
-              
-              // メッシュの色を直接更新（再生成しない）
-              voxelMeshRef.current.updateMeshColor(meshGroupRef.current, selectedVoxelId, targetFace.id, selectedColor)
-
-              // 更新されたメッシュの baseColor を新しい色に設定
-              if (meshGroupRef.current) {
-                meshGroupRef.current.children.forEach((child) => {
-                  if (child instanceof THREE.Mesh) {
-                    if (child.userData.voxelId === selectedVoxelId && child.userData.faceId === targetFace.id) {
-                      const colorValue = parseInt(selectedColor.replace('#', ''), 16)
-                      child.userData.baseColor = colorValue
-                    }
-                  }
-                })
-              }
-
-              console.log('Face painted:', selectedVoxelId, targetFace.id, selectedColor)
-
-              // アクション履歴に追加
-              actionHistoryRef.current?.pushAction(
-                'colorFace',
-                {
-                  faceId: targetFace.id,
-                  voxelId: selectedVoxelId,
-                  previousColor: previousColor,
-                  newColor: selectedColor
-                },
-                `面を着色: ${selectedColor}`,
-                'main'
-              )
-
-              updateUndoRedoButtons()
-            }
-          }
-        }
-      }
-    }
-
-    // === アクション復元ヘルパー関数 ===
-    const applyActionReverse = (action: {
-      type: string
-      data: Record<string, any>
-    }): void => {
-      if (!voxelMeshRef.current) return
-
-      switch (action.type) {
-        case 'addVoxel':
-          voxelMeshRef.current.deleteVoxel(action.data.voxelId)
-          break
-        case 'deleteVoxel':
-          if (action.data.voxelData) {
-            voxelMeshRef.current.restoreVoxel(action.data.voxelId, action.data.voxelData)
-          }
-          break
-        case 'colorFace':
-          voxelMeshRef.current.colorSpecificFace(
-            action.data.voxelId,
-            action.data.faceId,
-            action.data.previousColor
-          )
-          break
-      }
-    }
-
-    const updateUndoRedoButtons = (): void => {
-      setCanUndo(actionHistoryRef.current?.canUndo() ?? false)
-      setCanRedo(actionHistoryRef.current?.canRedo() ?? false)
+    const handleKeyDown = (_event: KeyboardEvent): void => {
+      // Ctrlショートカットは削除
     }
 
     // === ウィンドウリサイズ対応 ===
@@ -584,9 +524,23 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
         console.log('[handleAddVoxel] Result:', newVoxel?.id || 'null')
         
         if (newVoxel) {
+          // アクション履歴に追加
+          actionHistoryRef.current?.pushAction(
+            'addVoxel',
+            {
+              voxelId: newVoxel.id,
+              position: newVoxel.position,
+              adjacentDirection: targetFace.normal,
+              voxelData: newVoxel
+            },
+            `ボクセルを追加: ${newVoxel.id}`,
+            'main'
+          )
+          
           updateVoxelMeshRef.current?.()
           ;(canvasRef.current as any).selectedVoxelId = newVoxel.id
           setSelectedVoxelId(newVoxel.id)
+          updateUndoRedoButtons()
         }
       }
     }
@@ -601,12 +555,26 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
     }
     
     console.log('[handleDeleteVoxel] Deleting voxel:', selectedVoxelId)
-    const deleted = voxelMeshRef.current.deleteVoxel(selectedVoxelId)
-    if (deleted) {
+    const snapshot = voxelMeshRef.current.deleteVoxel(selectedVoxelId)
+    if (snapshot) {
       console.log('[handleDeleteVoxel] Voxel deleted successfully')
+      
+      // アクション履歴に追加
+      actionHistoryRef.current?.pushAction(
+        'deleteVoxel',
+        {
+          voxelId: selectedVoxelId,
+          position: snapshot.position,
+          voxelData: snapshot
+        },
+        `ボクセルを削除: ${selectedVoxelId}`,
+        'main'
+      )
+      
       updateVoxelMeshRef.current?.()
       ;(canvasRef.current as any).selectedVoxelId = null
       setSelectedVoxelId(null)
+      updateUndoRedoButtons()
     }
   }
 
@@ -630,6 +598,7 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
 
       if (targetFace) {
         console.log('[handlePaintFace] Coloring face:', targetFace.id)
+        const previousColor = targetFace.color || '#808080'
         voxelMeshRef.current.colorSpecificFace(voxelId, targetFace.id, selectedColor)
         // メッシュの色を直接更新
         voxelMeshRef.current.updateMeshColor(meshGroupRef.current, voxelId, targetFace.id, selectedColor)
@@ -643,67 +612,255 @@ function BoxelEditor({ gridSize }: BoxelEditorProps): JSX.Element {
             }
           }
         })
+
+        // アクション履歴に追加
+        actionHistoryRef.current?.pushAction(
+          'colorFace',
+          {
+            faceId: targetFace.id,
+            voxelId: voxelId,
+            previousColor: previousColor,
+            newColor: selectedColor
+          },
+          `面を着色: ${selectedColor}`,
+          'main'
+        )
+
+        updateUndoRedoButtons()
       }
     }
   }
 
   const handleSave = async (): Promise<void> => {
     if (!voxelMeshRef.current) return
-    const glwFile = FileManager.createGlwTemplate(gridSize.x, gridSize.y)
-    glwFile.mainObject.voxels = Array.from(voxelMeshRef.current.getVoxels().values())
-    await FileManager.saveGlw(`boxel_${Date.now()}.glw`, glwFile)
+    
+    try {
+      // ファイル保存ダイアログを表示（タイムスタンプ付きのデフォルト名）
+      const defaultFileName = `boxel_project_${new Date().toISOString().slice(0, 10)}_${new Date().getHours().toString().padStart(2, '0')}${new Date().getMinutes().toString().padStart(2, '0')}.glw`
+      const result = await window.api.showSaveDialog(defaultFileName)
+      if (result.canceled || !result.filePath) {
+        console.log('Save dialog cancelled')
+        return
+      }
+
+      const glwFile = FileManager.createGlwTemplate(gridSize.x, gridSize.y)
+      glwFile.mainObject.voxels = Array.from(voxelMeshRef.current.getVoxels().values())
+      
+      // ファイルに保存
+      const content = JSON.stringify(glwFile, null, 2)
+      await window.api.saveProjectFile(result.filePath, content)
+      alert(`プロジェクトを保存しました: ${result.filePath}`)
+    } catch (error) {
+      console.error('Failed to save project:', error)
+      alert('プロジェクトの保存に失敗しました')
+    }
+  }
+
+  const handleLoad = async (): Promise<void> => {
+    if (!voxelMeshRef.current || !cameraRef.current || !meshGroupRef.current) {
+      alert('プロジェクト読み込みに必要なオブジェクトが初期化されていません')
+      return
+    }
+
+    try {
+      // ファイル開くダイアログを表示
+      const result = await window.api.showOpenDialog()
+      if (result.canceled || result.filePaths.length === 0) {
+        console.log('Open dialog cancelled')
+        return
+      }
+
+      const filePath = result.filePaths[0]
+      const content = await window.api.loadProjectFile(filePath)
+      const glwFile = JSON.parse(content)
+
+      // ボクセルメッシュをリセット
+      meshGroupRef.current.clear()
+      voxelMeshRef.current.clear()
+
+      // ボクセルを復元
+      if (glwFile.mainObject && glwFile.mainObject.voxels) {
+        glwFile.mainObject.voxels.forEach((voxelData: any) => {
+          voxelMeshRef.current?.restoreVoxel(voxelData.id, voxelData)
+        })
+      }
+
+      // カメラをリセット
+      cameraRef.current.position.set(0, 0, 20)
+      cameraRef.current.lookAt(0, gridSize.y / 2, 0)
+
+      // メッシュを再生成
+      updateVoxelMeshRef.current?.()
+      
+      // undo/redoをリセット
+      actionHistoryRef.current?.clear()
+      updateUndoRedoButtons()
+
+      alert(`プロジェクトを読み込みました: ${filePath}`)
+    } catch (error) {
+      console.error('Failed to load project:', error)
+      alert('プロジェクトの読み込みに失敗しました')
+    }
   }
 
   const handleExport = async (): Promise<void> => {
     if (!voxelMeshRef.current) return
-    await FileManager.exportGltf(`boxel_${Date.now()}.gltf`, voxelMeshRef.current.getVoxels())
+
+    try {
+      // ファイル保存ダイアログを表示
+      const defaultFileName = `boxel_${new Date().toISOString().slice(0, 10)}.gltf`
+      const result = await window.api.showExportDialog(defaultFileName)
+      
+      if (result.canceled || !result.filePath) {
+        console.log('Export dialog cancelled')
+        return
+      }
+
+      // GLTFデータを生成（カラー情報を含める）
+      const voxels = voxelMeshRef.current.getVoxels()
+      const colorMap = voxelMeshRef.current.getColorMap()
+      const gltfData = FileManager.createGltfData(voxels, colorMap)
+      const gltfString = JSON.stringify(gltfData, null, 2)
+
+      // ファイルに保存
+      await window.api.saveGltfFile(result.filePath, gltfString)
+      alert(`GLTFファイルをエクスポートしました: ${result.filePath}`)
+    } catch (error) {
+      console.error('Failed to export GLTF:', error)
+      alert('GLTFエクスポートに失敗しました')
+    }
+  }
+
+  // === 隣接オブジェクトハンドラー ===
+  const handleAddAdjacentObject = async (direction: string, filePath: string): Promise<void> => {
+    console.log('[BoxelEditor] handleAddAdjacentObject called:', direction, filePath)
+    if (!adjacentObjectManagerRef.current) {
+      console.error('[BoxelEditor] adjacentObjectManagerRef.current is null')
+      return
+    }
+
+    try {
+      console.log('[BoxelEditor] Calling addAdjacentObject...')
+      const adjObj = await adjacentObjectManagerRef.current.addAdjacentObject(
+        filePath,
+        direction as 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
+        gridSize.x,
+        gridSize.y
+      )
+
+      if (adjObj) {
+        setAdjacentObjects(adjacentObjectManagerRef.current.getAllAdjacentObjects())
+        updateAdjacentMeshesRef.current?.()
+        console.log('[BoxelEditor] Adjacent object added:', adjObj.id)
+      } else {
+        console.error('[BoxelEditor] adjObj is null')
+        alert('隣接オブジェクトの追加に失敗しました')
+      }
+    } catch (error) {
+      console.error('[BoxelEditor] Failed to add adjacent object:', error)
+      alert('隣接オブジェクトの追加に失敗しました')
+    }
+  }
+
+  const handleRemoveAdjacentObject = (objectId: string): void => {
+    if (!adjacentObjectManagerRef.current) return
+
+    if (adjacentObjectManagerRef.current.removeAdjacentObject(objectId)) {
+      setAdjacentObjects(adjacentObjectManagerRef.current.getAllAdjacentObjects())
+      updateAdjacentMeshesRef.current?.()
+      console.log('Adjacent object removed:', objectId)
+    }
+  }
+
+  const handleToggleAdjacentVisibility = (objectId: string): void => {
+    if (!adjacentObjectManagerRef.current) return
+
+    const obj = adjacentObjectManagerRef.current.getAdjacentObject(objectId)
+    if (obj) {
+      adjacentObjectManagerRef.current.setAdjacentObjectVisibility(objectId, !obj.visible)
+      setAdjacentObjects([...adjacentObjectManagerRef.current.getAllAdjacentObjects()])
+      updateAdjacentMeshesRef.current?.()
+    }
+  }
+
+  const handleRotateAdjacentObject = (objectId: string): void => {
+    if (!adjacentObjectManagerRef.current) return
+
+    if (adjacentObjectManagerRef.current.rotateAdjacentObjectClockwise(objectId)) {
+      setAdjacentObjects([...adjacentObjectManagerRef.current.getAllAdjacentObjects()])
+      updateAdjacentMeshesRef.current?.()
+    }
   }
 
   return (
     <div className="boxel-editor">
-      <div className="toolbar">
+      <div className="main-content">
+        <div className="toolbar">
         <button onClick={handleAddVoxel} disabled={!selectedVoxelId}>
-          追加 (Shift+A)
+          追加
         </button>
         <button onClick={handleDeleteVoxel} disabled={!selectedVoxelId}>
-          削除 (Alt+Del)
+          削除
         </button>
         <button onClick={handlePaintFace} disabled={!selectedVoxelId}>
-          着色 (Alt+C)
+          着色
         </button>
-        <input
-          type="color"
-          value={selectedColor}
-          onChange={(e) => setSelectedColor(e.target.value)}
-          title="色を選択"
-        />
+        <button onClick={handleLoad}>開く</button>
         <button onClick={handleSave}>保存</button>
         <button onClick={handleExport}>エクスポート</button>
-        <button onClick={() => actionHistoryRef.current?.undo()} disabled={!canUndo}>
+        <button onClick={() => {
+          const action = actionHistoryRef.current?.peekUndo()
+          if (action) {
+            applyActionReverse(action)
+            actionHistoryRef.current?.undo()
+            updateVoxelMeshRef.current?.()
+            updateUndoRedoButtons()
+          }
+        }} disabled={!canUndo}>
           アンドゥ
         </button>
-        <button onClick={() => actionHistoryRef.current?.redo()} disabled={!canRedo}>
+        <button onClick={() => {
+          const action = actionHistoryRef.current?.redo()
+          if (action) {
+            applyAction(action)
+            updateVoxelMeshRef.current?.()
+            updateUndoRedoButtons()
+          }
+        }} disabled={!canRedo}>
           リドゥ
         </button>
+        </div>
+
+        <div className="status-bar">
+          <span>グリッドサイズ: {gridSize.x} × {gridSize.y} × {gridSize.z}</span>
+          <span>頂点数: {vertexCount}</span>
+          <span>ボクセル数: {voxelCount}</span>
+          <span>選択: {selectedVoxelId ? selectedVoxelId : 'なし'}</span>
+          <span>色: {selectedColor}</span>
+          <span>隣接: {adjacentObjects.length}</span>
+        </div>
+
+        <div className="instructions">
+          <p>クリック=選択 · WASD=回転 · 矢印=パン · Q=ズーム</p>
+        </div>
+
+        <canvas
+          ref={canvasRef}
+          id="three-canvas"
+          style={{ width: '100%', height: 'calc(100vh - 130px)', display: 'block' }}
+        />
       </div>
 
-      <div className="status-bar">
-        <span>グリッドサイズ: {gridSize.x} × {gridSize.y} × {gridSize.z}</span>
-        <span>頂点数: {vertexCount}</span>
-        <span>ボクセル数: {voxelCount}</span>
-        <span>選択: {selectedVoxelId ? selectedVoxelId : 'なし'}</span>
-        <span>色: {selectedColor}</span>
+      {/* 右サイドパネル - 隣接オブジェクト */}
+      <div className="side-panel right-panel">
+        <AdjacentObjectPanel
+          adjacentObjects={adjacentObjects}
+          onAddAdjacentObject={handleAddAdjacentObject}
+          onRemoveAdjacentObject={handleRemoveAdjacentObject}
+          onToggleVisibility={handleToggleAdjacentVisibility}
+          onRotateObject={handleRotateAdjacentObject}
+        />
       </div>
-
-      <div className="instructions">
-        <p>クリック=選択 · A=追加 · Del=削除 · C=着色 · WASD=回転 · 矢印=パン · Q=ズーム</p>
-      </div>
-
-      <canvas
-        ref={canvasRef}
-        id="three-canvas"
-        style={{ width: '100%', height: 'calc(100vh - 130px)', display: 'block' }}
-      />
     </div>
   )
 }

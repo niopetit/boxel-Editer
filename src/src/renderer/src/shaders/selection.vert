@@ -1,19 +1,12 @@
-// Selection Highlight Vertex Shader
-// 選択ハイライト表示用の頂点シェーダー
+attribute vec3 barycentric;
+attribute vec3 normal;
 
-uniform float uOutlineWidth;
-uniform bool uIsSelected;
-
+varying vec3 vBarycentric;
 varying vec3 vNormal;
 
 void main() {
-  vec3 newPosition = position;
-  
-  if (uIsSelected) {
-    // 法線方向に膨張させてアウトラインを作成
-    newPosition = position + normal * uOutlineWidth;
-  }
-  
+  vBarycentric = barycentric;
   vNormal = normalize(normalMatrix * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+  
+  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
 }

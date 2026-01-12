@@ -2,65 +2,96 @@
  * AdjacentObjectManager
  * 隣接オブジェクト（複数配置）の管理
  * 複数オブジェクト配置仕様書に準拠
+ * GLTFファイルを読み込み、グレースケール半透明で表示
  */
 
+import * as THREE from 'three'
+import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { AdjacentObject, Voxel, Vector3, GlwAdjacentObject } from '../types/index'
-import { FileManager } from './FileManager'
+
+// 隣接オブジェクト用の拡張型（Three.jsオブジェクトを含む）
+export interface AdjacentObjectWithMesh extends AdjacentObject {
+  mesh: THREE.Group | null  // GLTFから読み込んだメッシュ
+}
 
 export class AdjacentObjectManager {
-  private adjacentObjects: Map<string, AdjacentObject> = new Map()
+  private adjacentObjects: Map<string, AdjacentObjectWithMesh> = new Map()
   private objectIdCounter: number = 0
+  private gltfLoader: GLTFLoader
+  private grayscaleMaterial: THREE.MeshStandardMaterial
+
+  constructor() {
+    this.gltfLoader = new GLTFLoader()
+    // 共有マテリアル（グレースケール半透明）を作成
+    this.grayscaleMaterial = new THREE.MeshStandardMaterial({
+      color: 0x888888,
+      metalness: 0.0,
+      roughness: 1.0,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide
+    })
+  }
 
   /**
-   * 隣接オブジェクトを追加
+   * 隣接オブジェクトを追加（GLTFファイル対応）
    */
   async addAdjacentObject(
     filePath: string,
     direction: 'up' | 'down' | 'left' | 'right' | 'front' | 'back',
     mainGridSizeX: number,
     mainGridSizeY: number
-  ): Promise<AdjacentObject | null> {
+  ): Promise<AdjacentObjectWithMesh | null> {
+    console.log('[AdjacentObjectManager] addAdjacentObject called:', filePath, direction)
     try {
-      // ファイルを読み込み
-      const glwFile = await FileManager.loadGlw(filePath)
-      if (!glwFile) {
-        console.error('Failed to load adjacent object file:', filePath)
+      // メインプロセス経由でGLTFファイルを読み込み
+      console.log('[AdjacentObjectManager] Calling loadGltfFile...')
+      const fileData = await window.api.loadGltfFile(filePath)
+      console.log('[AdjacentObjectManager] loadGltfFile result:', fileData ? 'success' : 'null')
+      if (!fileData) {
+        console.error('Failed to load GLTF file via IPC:', filePath)
         return null
       }
+
+      // Base64からGLTFを読み込み
+      console.log('[AdjacentObjectManager] Parsing GLTF, extension:', fileData.extension)
+      const gltf = await this.loadGltfFromBase64(fileData.data, fileData.extension)
+      if (!gltf) {
+        console.error('Failed to parse GLTF data:', filePath)
+        return null
+      }
+
+      // バウンディングボックスからサイズを計算
+      const boundingBox = new THREE.Box3().setFromObject(gltf.scene)
+      const size = new THREE.Vector3()
+      boundingBox.getSize(size)
 
       // 位置を計算
       const position = this.calculateAdjacentPosition(
         { x: mainGridSizeX, y: mainGridSizeY, z: 1 },
-        { x: glwFile.mainObject.gridSizeX, y: glwFile.mainObject.gridSizeY, z: 1 },
+        { x: Math.ceil(size.x), y: Math.ceil(size.y), z: Math.ceil(size.z) || 1 },
         direction
       )
 
-      // ボクセルマップを作成
-      const voxelMap = new Map<string, Voxel>()
-      glwFile.mainObject.voxels.forEach(voxel => {
-        voxelMap.set(voxel.id, voxel)
-      })
+      // メッシュグループを作成（元のマテリアルを保持）
+      const meshGroup = this.createOriginalMesh(gltf.scene)
+      meshGroup.position.set(position.x, position.y, position.z)
 
-      // 色情報をマップ化
-      const colorMap = new Map<string, string>()
-      Object.entries(glwFile.mainObject.colors).forEach(([key, color]) => {
-        colorMap.set(key, color)
-      })
-
-      const adjacentObject: AdjacentObject = {
+      const adjacentObject: AdjacentObjectWithMesh = {
         id: `adjacent_${this.objectIdCounter++}`,
-        filePath: FileManager.createRelativePath(filePath, filePath), // 相対パスに変換
+        filePath: filePath,
         direction,
         position,
-        gridSizeX: glwFile.mainObject.gridSizeX,
-        gridSizeY: glwFile.mainObject.gridSizeY,
-        voxels: voxelMap,
-        colors: colorMap,
-        visible: true
+        gridSizeX: Math.ceil(size.x),
+        gridSizeY: Math.ceil(size.y),
+        voxels: new Map(),
+        colors: new Map(),
+        visible: true,
+        mesh: meshGroup
       }
 
       this.adjacentObjects.set(adjacentObject.id, adjacentObject)
-      console.log('Adjacent object added:', adjacentObject.id)
+      console.log('Adjacent object added:', adjacentObject.id, 'size:', size)
 
       return adjacentObject
     } catch (error) {
@@ -70,10 +101,137 @@ export class AdjacentObjectManager {
   }
 
   /**
+   * Base64からGLTFを読み込み
+   */
+  private loadGltfFromBase64(base64Data: string, extension: string): Promise<GLTF | null> {
+    return new Promise((resolve) => {
+      try {
+        console.log('[GLTF] Loading from base64, extension:', extension)
+        
+        // Base64をArrayBufferに変換
+        const binaryString = atob(base64Data)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i)
+        }
+        const arrayBuffer = bytes.buffer
+
+        console.log('[GLTF] ArrayBuffer size:', arrayBuffer.byteLength)
+
+        if (extension === 'glb') {
+          // GLBファイル（バイナリ）
+          console.log('[GLTF] Parsing as GLB binary')
+          this.gltfLoader.parse(
+            arrayBuffer,
+            '',
+            (gltf) => {
+              console.log('[GLTF] GLB parsed successfully')
+              resolve(gltf)
+            },
+            (error) => {
+              console.error('[GLTF] GLB parse error:', error)
+              resolve(null)
+            }
+          )
+        } else {
+          // GLTFファイル（JSON）- ArrayBufferをそのまま渡す
+          console.log('[GLTF] Parsing as GLTF JSON')
+          this.gltfLoader.parse(
+            arrayBuffer,
+            '',
+            (gltf) => {
+              console.log('[GLTF] GLTF parsed successfully')
+              resolve(gltf)
+            },
+            (error) => {
+              console.error('[GLTF] GLTF parse error:', error)
+              resolve(null)
+            }
+          )
+        }
+      } catch (error) {
+        console.error('[GLTF] Failed to parse from base64:', error)
+        resolve(null)
+      }
+    })
+  }
+
+  /**
+   * オリジナルのメッシュをそのまま使用（元の色・マテリアルを保持）
+   */
+  private createOriginalMesh(scene: THREE.Object3D): THREE.Group {
+    const group = new THREE.Group()
+    
+    // シーン内のすべてのメッシュを走査
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        // ジオメトリをクローン
+        const clonedGeometry = child.geometry.clone()
+        
+        // ワールド変換を適用
+        child.updateWorldMatrix(true, false)
+        clonedGeometry.applyMatrix4(child.matrixWorld)
+        
+        // マテリアルをクローン（元のファイルを変更しないため）
+        let clonedMaterial: THREE.Material | THREE.Material[]
+        if (Array.isArray(child.material)) {
+          clonedMaterial = child.material.map(m => m.clone())
+        } else {
+          clonedMaterial = child.material.clone()
+        }
+        
+        // 新しいメッシュを作成（元のマテリアルを使用）
+        const newMesh = new THREE.Mesh(clonedGeometry, clonedMaterial)
+        newMesh.userData.isAdjacentObject = true
+        
+        group.add(newMesh)
+      }
+    })
+
+    return group
+  }
+
+  /**
+   * グレースケールメッシュを作成（パフォーマンス最適化済み）
+   */
+  private createGrayscaleMesh(scene: THREE.Object3D): THREE.Group {
+    const group = new THREE.Group()
+    
+    // シーン内のすべてのメッシュを走査
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        // ジオメトリをクローン（元のファイルを変更しないため）
+        const clonedGeometry = child.geometry.clone()
+        
+        // ワールド変換を適用
+        child.updateWorldMatrix(true, false)
+        clonedGeometry.applyMatrix4(child.matrixWorld)
+        
+        // 共有マテリアルを使用して新しいメッシュを作成
+        const newMesh = new THREE.Mesh(clonedGeometry, this.grayscaleMaterial)
+        newMesh.userData.isAdjacentObject = true
+        
+        group.add(newMesh)
+      }
+    })
+
+    return group
+  }
+
+  /**
    * 隣接オブジェクトを削除
    */
   removeAdjacentObject(objectId: string): boolean {
-    if (this.adjacentObjects.has(objectId)) {
+    const obj = this.adjacentObjects.get(objectId)
+    if (obj) {
+      // メッシュのジオメトリを解放
+      if (obj.mesh) {
+        obj.mesh.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose()
+          }
+        })
+      }
       this.adjacentObjects.delete(objectId)
       console.log('Adjacent object removed:', objectId)
       return true
@@ -91,7 +249,7 @@ export class AdjacentObjectManager {
   /**
    * すべての隣接オブジェクトを取得
    */
-  getAllAdjacentObjects(): AdjacentObject[] {
+  getAllAdjacentObjects(): AdjacentObjectWithMesh[] {
     return Array.from(this.adjacentObjects.values())
   }
 
@@ -114,6 +272,20 @@ export class AdjacentObjectManager {
       return true
     }
     return false
+  }
+
+  /**
+   * 隣接オブジェクトをY軸周りに時計回りに90度回転
+   */
+  rotateAdjacentObjectClockwise(objectId: string): boolean {
+    const obj = this.adjacentObjects.get(objectId)
+    if (!obj || !obj.mesh) return false
+
+    // Y軸周りに時計回りに90度回転（-π/2）
+    obj.mesh.rotation.y -= Math.PI / 2
+
+    console.log(`Adjacent object ${objectId} rotated, new Y rotation: ${obj.mesh.rotation.y}`)
+    return true
   }
 
   /**
@@ -191,7 +363,7 @@ export class AdjacentObjectManager {
         colorMap.set(key, color)
       })
 
-      const adjacentObject: AdjacentObject = {
+      const adjacentObject: AdjacentObjectWithMesh = {
         id: glwObj.id,
         filePath: glwObj.filePath,
         direction: glwObj.direction,
@@ -200,7 +372,8 @@ export class AdjacentObjectManager {
         gridSizeY: glwObj.gridSizeY,
         voxels: voxelMap,
         colors: colorMap,
-        visible: true
+        visible: true,
+        mesh: null  // GLWから復元時はメッシュはない（後でGLTFを再読み込みが必要）
       }
 
       this.adjacentObjects.set(adjacentObject.id, adjacentObject)
@@ -263,7 +436,17 @@ export class AdjacentObjectManager {
     this.adjacentObjects.forEach(obj => {
       obj.voxels.clear()
       obj.colors.clear()
+      // メッシュのジオメトリを解放
+      if (obj.mesh) {
+        obj.mesh.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose()
+          }
+        })
+      }
     })
     this.adjacentObjects.clear()
+    // 共有マテリアルを解放
+    this.grayscaleMaterial.dispose()
   }
 }

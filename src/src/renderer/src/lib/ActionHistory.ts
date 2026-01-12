@@ -30,6 +30,8 @@ export class ActionHistory {
       targetObject
     }
 
+    console.log('[ActionHistory.pushAction] Action pushed:', action.type, 'undoStack size:', this.undoStack.length + 1)
+
     // リドゥスタックをクリア（新しい操作が行われたため）
     this.redoStack = []
 
@@ -128,6 +130,7 @@ export class ActionHistory {
   clear(): void {
     this.undoStack = []
     this.redoStack = []
+    this.actionIdCounter = 0
     this.onStackChanged()
   }
 
@@ -136,6 +139,30 @@ export class ActionHistory {
    */
   getHistory(): Action[] {
     return [...this.undoStack, ...this.redoStack]
+  }
+
+  /**
+   * アクションを履歴に復元（ファイルから読み込み時に使用）
+   */
+  restoreAction(action: Action): void {
+    this.undoStack.push(action)
+    // アクションIDカウンターを更新
+    const idNum = parseInt(action.id.split('_')[1] || '0', 10)
+    if (idNum >= this.actionIdCounter) {
+      this.actionIdCounter = idNum + 1
+    }
+    this.onStackChanged()
+  }
+
+  /**
+   * すべての履歴を復元（ファイルから読み込み時に使用）
+   */
+  restoreHistory(actions: Action[]): void {
+    this.undoStack = []
+    this.redoStack = []
+    for (const action of actions) {
+      this.restoreAction(action)
+    }
   }
 
   /**

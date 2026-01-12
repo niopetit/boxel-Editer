@@ -200,13 +200,16 @@ export interface GlwMetadata {
   updatedAt: string
   gridSizeX: number
   gridSizeY: number
+  gridSizeZ?: number
   maxGridX?: number
   maxGridY?: number
+  maxGrid?: number
 }
 
 export interface GlwMainObject {
   gridSizeX: number
   gridSizeY: number
+  gridSizeZ?: number
   voxels: Voxel[]
   colors: { [key: string]: string }
 }
@@ -227,7 +230,6 @@ export interface GlwFile {
   metadata: GlwMetadata
   mainObject: GlwMainObject
   adjacentObjects: GlwAdjacentObject[]
-  camera: CameraState
   colorPalette: PaletteColor[]
   undoRedoHistory: Action[]
 }
