@@ -10,9 +10,36 @@ import { AdjacentObject } from '../types/index'
 import AdjacentObjectPanel from './AdjacentObjectPanel'
 import './styles/BoxelEditor.css'
 
+// ハイライト色定数
+const HOVER_HIGHLIGHT_COLOR = 0x0099FF
+const SELECTION_HIGHLIGHT_COLOR = 0xFFFF00
+
 interface BoxelEditorProps {
   gridSize: { x: number; y: number; z: number }
   selectedColor: string
+}
+
+// メッシュの色を設定するヘルパー関数
+const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
+  if (mesh.material instanceof THREE.MeshBasicMaterial) {
+    mesh.material.color.setHex(colorHex)
+  } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+    const r = ((colorHex >> 16) & 255) / 255
+    const g = ((colorHex >> 8) & 255) / 255
+    const b = (colorHex & 255) / 255
+    mesh.material.uniforms.uColor.value.setRGB(r, g, b)
+  }
+}
+
+// メッシュの色を取得するヘルパー関数
+const getMeshColor = (mesh: THREE.Mesh): number | null => {
+  if (mesh.material instanceof THREE.MeshBasicMaterial) {
+    return mesh.material.color.getHex()
+  } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
+    const c = mesh.material.uniforms.uColor.value
+    return (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255)
+  }
+  return null
 }
 
 function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element {
@@ -277,18 +304,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
 
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
 
-      // メッシュの色を設定するヘルパー関数
-      const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
-        if (mesh.material instanceof THREE.MeshBasicMaterial) {
-          mesh.material.color.setHex(colorHex)
-        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
-          const r = ((colorHex >> 16) & 255) / 255
-          const g = ((colorHex >> 8) & 255) / 255
-          const b = (colorHex & 255) / 255
-          mesh.material.uniforms.uColor.value.setRGB(r, g, b)
-        }
-      }
-
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
@@ -315,7 +330,7 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
             }
           }
           // 青色でホバーハイライト
-          setMeshColor(mesh, 0x0099FF)
+          setMeshColor(mesh, HOVER_HIGHLIGHT_COLOR)
           previouslyHoveredMeshRef.current = mesh
         } else {
           // 選択されているメッシュをホバーした場合、ホバー参照をクリア（選択色を維持）
@@ -359,29 +374,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       const intersects = raycasterRef.current.intersectObjects(meshes, false)
 
 
-      // メッシュの色を設定するヘルパー関数
-      const setMeshColor = (mesh: THREE.Mesh, colorHex: number): void => {
-        if (mesh.material instanceof THREE.MeshBasicMaterial) {
-          mesh.material.color.setHex(colorHex)
-        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
-          const r = ((colorHex >> 16) & 255) / 255
-          const g = ((colorHex >> 8) & 255) / 255
-          const b = (colorHex & 255) / 255
-          mesh.material.uniforms.uColor.value.setRGB(r, g, b)
-        }
-      }
-
-      // メッシュの色を取得するヘルパー関数
-      const getMeshColor = (mesh: THREE.Mesh): number | null => {
-        if (mesh.material instanceof THREE.MeshBasicMaterial) {
-          return mesh.material.color.getHex()
-        } else if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uColor) {
-          const c = mesh.material.uniforms.uColor.value
-          return (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255)
-        }
-        return null
-      }
-
       if (intersects.length > 0) {
         const mesh = intersects[0].object as THREE.Mesh
 
@@ -407,7 +399,7 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
             mesh.userData.baseColor = getMeshColor(mesh)
           }
           // 黄色でハイライト
-          setMeshColor(mesh, 0xFFFF00)
+          setMeshColor(mesh, SELECTION_HIGHLIGHT_COLOR)
           previouslySelectedMeshRef.current = mesh
           previouslyHoveredMeshRef.current = null
 
@@ -416,24 +408,8 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
             ;(canvasRef.current as any).selectedFaceId = faceId
             ;(canvasRef.current as any).selectedVoxelId = voxelId
           }
-          // 選択されたボクセルの面の色をパレットに反映
-          if (voxelMeshRef.current) {
-            const voxel = voxelMeshRef.current.getVoxel(voxelId)
-            if (voxel) {
-              const face = voxel.faces.find((f) => f.id === faceId)
-              if (face && face.color) {
-              }
-            }
-          }
-        } else {
         }
-      } else {
       }
-    }
-
-    // === キーボードイベント ===
-    const handleKeyDown = (_event: KeyboardEvent): void => {
-      // Ctrlショートカットは削除
     }
 
     // === ウィンドウリサイズ対応 ===
@@ -454,7 +430,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     // === イベントリスナー登録 ===
     canvasRef.current.addEventListener('click', handleMouseClick)
     canvasRef.current.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('keydown', handleKeyDown)
     window.addEventListener('resize', handleResize)
 
     // === アニメーションループ ===
@@ -472,7 +447,6 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
       window.removeEventListener('resize', handleResize)
       canvasRef.current?.removeEventListener('click', handleMouseClick)
       canvasRef.current?.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('keydown', handleKeyDown)
       cancelAnimationFrame(animationIdRef.current)
       renderer.dispose()
     }
