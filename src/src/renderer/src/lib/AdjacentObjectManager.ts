@@ -270,21 +270,47 @@ export class AdjacentObjectManager {
 
     switch (direction) {
       case 'up':
-        return { x: adjOffsetX, y: mainGridSize.y + adjOffsetY, z: adjOffsetZ }
+        // 上: メインの上端にY方向で隣接、X/Zは中心合わせ
+        return {
+          x: mainOffsetX + mainGridSize.x / 2 - adjacentGridSize.x / 2 + adjOffsetX,
+          y: mainGridSize.y + adjOffsetY,
+          z: mainOffsetZ + mainGridSize.z / 2 - adjacentGridSize.z / 2 + adjOffsetZ
+        }
       case 'down':
-        return { x: adjOffsetX, y: -adjacentGridSize.y + adjOffsetY, z: adjOffsetZ }
+        // 下: メインの下端にY方向で隣接、X/Zは中心合わせ
+        return {
+          x: mainOffsetX + mainGridSize.x / 2 - adjacentGridSize.x / 2 + adjOffsetX,
+          y: -adjacentGridSize.y + adjOffsetY,
+          z: mainOffsetZ + mainGridSize.z / 2 - adjacentGridSize.z / 2 + adjOffsetZ
+        }
       case 'left':
-        // メインの左端に隣接
-        return { x: mainOffsetX - adjacentGridSize.x + adjOffsetX, y: adjOffsetY, z: adjOffsetZ }
+        // 左: メインの左端にX方向で隣接、Y/Zは中心合わせ
+        return {
+          x: mainOffsetX - adjacentGridSize.x + adjOffsetX,
+          y: mainGridSize.y / 2 - adjacentGridSize.y / 2 + adjOffsetY,
+          z: mainOffsetZ + mainGridSize.z / 2 - adjacentGridSize.z / 2 + adjOffsetZ
+        }
       case 'right':
-        // メインの右端に隣接
-        return { x: mainMaxX + adjOffsetX, y: adjOffsetY, z: adjOffsetZ }
+        // 右: メインの右端にX方向で隣接、Y/Zは中心合わせ
+        return {
+          x: mainMaxX + adjOffsetX,
+          y: mainGridSize.y / 2 - adjacentGridSize.y / 2 + adjOffsetY,
+          z: mainOffsetZ + mainGridSize.z / 2 - adjacentGridSize.z / 2 + adjOffsetZ
+        }
       case 'front':
-        // メインの前端に隣接（Z-方向）、X軸中心に配置
-        return { x: adjOffsetX - adjacentGridSize.x / 2, y: adjOffsetY, z: mainOffsetZ - adjacentGridSize.z + adjOffsetZ }
+        // 前: メインの前端にZ-方向で隣接、X/Yは中心合わせ
+        return {
+          x: mainOffsetX + mainGridSize.x / 2 - adjacentGridSize.x / 2 + adjOffsetX,
+          y: mainGridSize.y / 2 - adjacentGridSize.y / 2 + adjOffsetY,
+          z: mainOffsetZ - adjacentGridSize.z + adjOffsetZ
+        }
       case 'back':
-        // メインの後端に隣接（Z+方向）、X軸中心に配置
-        return { x: adjOffsetX - adjacentGridSize.x / 2, y: adjOffsetY, z: mainMaxZ + adjOffsetZ }
+        // 後: メインの後端にZ+方向で隣接、X/Yは中心合わせ
+        return {
+          x: mainOffsetX + mainGridSize.x / 2 - adjacentGridSize.x / 2 + adjOffsetX,
+          y: mainGridSize.y / 2 - adjacentGridSize.y / 2 + adjOffsetY,
+          z: mainMaxZ + adjOffsetZ
+        }
       default:
         return { x: 0, y: 0, z: 0 }
     }
