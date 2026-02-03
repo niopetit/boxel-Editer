@@ -116,6 +116,16 @@
   margin-left: 10px;
 }
 
+.position-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.position-controls .pos-row {
+  display: flex;
+  gap: 6px;
+}
 .visibility-button,
 .remove-button,
 .rotate-button {

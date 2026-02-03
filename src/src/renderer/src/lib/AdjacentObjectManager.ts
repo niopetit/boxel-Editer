@@ -244,6 +244,42 @@ export class AdjacentObjectManager {
   }
 
   /**
+   * 隣接オブジェクトの位置を直接設定する
+   */
+  setAdjacentObjectPosition(objectId: string, position: Vector3): boolean {
+    const obj = this.adjacentObjects.get(objectId)
+    if (!obj) return false
+
+    obj.position = position
+    if (obj.mesh) {
+      obj.mesh.position.set(position.x, position.y, position.z)
+    }
+
+    return true
+  }
+
+  /**
+   * 隣接オブジェクトの位置を相対移動する（デルタ指定）
+   */
+  translateAdjacentObject(objectId: string, delta: Vector3): boolean {
+    const obj = this.adjacentObjects.get(objectId)
+    if (!obj) return false
+
+    const newPos = {
+      x: obj.position.x + delta.x,
+      y: obj.position.y + delta.y,
+      z: obj.position.z + delta.z
+    }
+
+    obj.position = newPos
+    if (obj.mesh) {
+      obj.mesh.position.set(newPos.x, newPos.y, newPos.z)
+    }
+
+    return true
+  }
+
+  /**
    * 隣接オブジェクトの位置を計算
    * メインオブジェクトはX-Z平面の中心が(0,0)、底面がy=0に配置される
    * 例: gridSize.x=4の場合、X方向は-2〜2の範囲

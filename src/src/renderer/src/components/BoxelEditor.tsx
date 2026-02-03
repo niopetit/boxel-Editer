@@ -1010,6 +1010,15 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
     }
   }
 
+  const handleSetAdjacentObjectPosition = (objectId: string, position: { x: number; y: number; z: number }): void => {
+    if (!adjacentObjectManagerRef.current) return
+
+    if (adjacentObjectManagerRef.current.setAdjacentObjectPosition(objectId, position)) {
+      setAdjacentObjects([...adjacentObjectManagerRef.current.getAllAdjacentObjects()])
+      updateAdjacentMeshesRef.current?.()
+    }
+  }
+
   return (
     <div className="boxel-editor" onDoubleClick={(e) => {
       // canvas以外でのダブルクリックを無効化
@@ -1083,6 +1092,7 @@ function BoxelEditor({ gridSize, selectedColor }: BoxelEditorProps): JSX.Element
           onRemoveAdjacentObject={handleRemoveAdjacentObject}
           onToggleVisibility={handleToggleAdjacentVisibility}
           onRotateObject={handleRotateAdjacentObject}
+          onSetPosition={handleSetAdjacentObjectPosition}
         />
       </div>
     </div>

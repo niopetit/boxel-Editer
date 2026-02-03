@@ -14,6 +14,7 @@ interface AdjacentObjectPanelProps {
   onRemoveAdjacentObject: (objectId: string) => void
   onToggleVisibility: (objectId: string) => void
   onRotateObject: (objectId: string) => void
+  onSetPosition?: (objectId: string, position: { x: number; y: number; z: number }) => void
 }
 
 type Direction = 'up' | 'down' | 'left' | 'right' | 'front' | 'back'
@@ -32,7 +33,8 @@ function AdjacentObjectPanel({
   onAddAdjacentObject,
   onRemoveAdjacentObject,
   onToggleVisibility,
-  onRotateObject
+  onRotateObject,
+  onSetPosition
 }: AdjacentObjectPanelProps): JSX.Element {
   const [showDialog, setShowDialog] = useState(false)
   const [selectedDirection, setSelectedDirection] = useState<Direction>('up')
@@ -77,12 +79,12 @@ function AdjacentObjectPanel({
           </button>
 
           <div className="object-list">
-            {adjacentObjects.length === 0 ? (
+            {adjacentObjects.length === 0 && (
               <div className="empty-message">
                 配置されている隣接オブジェクトはありません
               </div>
-            ) : (
-              adjacentObjects.map((obj) => (
+            )}
+            {adjacentObjects.length > 0 && adjacentObjects.map((obj) => (
                 <div key={obj.id} className="object-item">
                   <div className="object-info">
                     <span className="object-direction">{directionLabels[obj.direction]}</span>
@@ -115,10 +117,25 @@ function AdjacentObjectPanel({
                     >
                       ✕
                     </button>
+                    {/* 位置調整ボタン（X/Y/Z 各行、0.25単位） */}
+                    <div className="position-controls">
+                      <div className="pos-row">
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x + 0.25, y: obj.position.y, z: obj.position.z })}>X+</button>
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x - 0.25, y: obj.position.y, z: obj.position.z })}>X-</button>
+                      </div>
+                      <div className="pos-row">
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x, y: obj.position.y + 0.25, z: obj.position.z })}>Y+</button>
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x, y: obj.position.y - 0.25, z: obj.position.z })}>Y-</button>
+                      </div>
+                      <div className="pos-row">
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x, y: obj.position.y, z: obj.position.z + 0.25 })}>Z+</button>
+                        <button className="visibility-button" onClick={() => onSetPosition?.(obj.id, { x: obj.position.x, y: obj.position.y, z: obj.position.z - 0.25 })}>Z-</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))
-            )}
+            }
           </div>
 
           <div className="stats">
