@@ -282,6 +282,14 @@ export class FileManager {
       glwFile.metadata.maxGridY = 50
     }
 
+    // gridSizeZが存在しない場合は、gridSizeYで初期化
+    if (!glwFile.metadata.gridSizeZ) {
+      glwFile.metadata.gridSizeZ = glwFile.metadata.gridSizeY
+    }
+    if (!glwFile.mainObject.gridSizeZ) {
+      glwFile.mainObject.gridSizeZ = glwFile.mainObject.gridSizeY
+    }
+
     glwFile.version = this.CURRENT_VERSION
   }
 

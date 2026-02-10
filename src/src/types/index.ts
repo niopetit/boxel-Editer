@@ -217,6 +217,7 @@ export interface GlwMetadata {
   updatedAt: string
   gridSizeX: number
   gridSizeY: number
+  gridSizeZ?: number
   maxGridX: number
   maxGridY: number
 }
@@ -224,6 +225,7 @@ export interface GlwMetadata {
 export interface GlwMainObject {
   gridSizeX: number
   gridSizeY: number
+  gridSizeZ?: number
   voxels: Voxel[]
   colors: { [key: string]: string }
 }

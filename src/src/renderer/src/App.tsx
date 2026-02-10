@@ -73,7 +73,11 @@ function App(): JSX.Element {
     <div className="app-container">
       <ColorPaletteSidebar selectedColor={selectedColor} onColorSelect={setSelectedColor} />
       <div className="app">
-        <BoxelEditor gridSize={gridSize} selectedColor={selectedColor} />
+        <BoxelEditor 
+          gridSize={gridSize} 
+          selectedColor={selectedColor} 
+          onColorPick={setSelectedColor}
+        />
       </div>
     </div>
   )
